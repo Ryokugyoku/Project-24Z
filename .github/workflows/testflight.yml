@@ -85,15 +85,46 @@ jobs:
             -authenticationKeyIssuerID "$API_ISSUER_ID" \
             CURRENT_PROJECT_VERSION="${GITHUB_RUN_NUMBER}"
 
-      - name: Upload to TestFlight
+      - name: Upload iOS app to TestFlight
         env:
           API_KEY_ID: ${{ secrets.APP_STORE_CONNECT_API_KEY_ID }}
           API_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
         run: |
           xcodebuild -exportArchive \
             -archivePath "${RUNNER_TEMP}/Project24Z.xcarchive" \
-            -exportPath "${RUNNER_TEMP}/Project24ZExport" \
-            -exportOptionsPlist Config/TestFlightExportOptions.plist \
+            -exportPath "${RUNNER_TEMP}/Project24ZiOSExport" \
+            -exportOptionsPlist Config/iOSTestFlightExportOptions.plist \
+            -allowProvisioningUpdates \
+            -authenticationKeyPath "${RUNNER_TEMP}/private_keys/AuthKey_${API_KEY_ID}.p8" \
+            -authenticationKeyID "$API_KEY_ID" \
+            -authenticationKeyIssuerID "$API_ISSUER_ID"
+
+      - name: Archive macOS app
+        env:
+          API_KEY_ID: ${{ secrets.APP_STORE_CONNECT_API_KEY_ID }}
+          API_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
+        run: |
+          xcodebuild archive \
+            -project "$PROJECT_PATH" \
+            -scheme "$SCHEME" \
+            -configuration Release \
+            -destination 'generic/platform=macOS' \
+            -archivePath "${RUNNER_TEMP}/Project24Z-macOS.xcarchive" \
+            -allowProvisioningUpdates \
+            -authenticationKeyPath "${RUNNER_TEMP}/private_keys/AuthKey_${API_KEY_ID}.p8" \
+            -authenticationKeyID "$API_KEY_ID" \
+            -authenticationKeyIssuerID "$API_ISSUER_ID" \
+            CURRENT_PROJECT_VERSION="${GITHUB_RUN_NUMBER}"
+
+      - name: Upload macOS app to TestFlight
+        env:
+          API_KEY_ID: ${{ secrets.APP_STORE_CONNECT_API_KEY_ID }}
+          API_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
+        run: |
+          xcodebuild -exportArchive \
+            -archivePath "${RUNNER_TEMP}/Project24Z-macOS.xcarchive" \
+            -exportPath "${RUNNER_TEMP}/Project24ZmacOSExport" \
+            -exportOptionsPlist Config/macOSTestFlightExportOptions.plist \
             -allowProvisioningUpdates \
             -authenticationKeyPath "${RUNNER_TEMP}/private_keys/AuthKey_${API_KEY_ID}.p8" \
             -authenticationKeyID "$API_KEY_ID" \
