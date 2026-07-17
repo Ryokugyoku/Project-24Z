@@ -1,0 +1,96 @@
+name: TestFlight
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+concurrency:
+  group: testflight-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  upload:
+    name: Build and upload
+    if: ${{ vars.TESTFLIGHT_ENABLED == 'true' }}
+    runs-on: macos-26
+    timeout-minutes: 45
+
+    env:
+      PROJECT_PATH: Project 24Z.xcodeproj
+      SCHEME: Project 24Z
+      ARCHIVE_PATH: ${{ runner.temp }}/Project24Z.xcarchive
+      EXPORT_PATH: ${{ runner.temp }}/Project24ZExport
+      API_KEY_PATH: ${{ runner.temp }}/private_keys/AuthKey_${{ secrets.APP_STORE_CONNECT_API_KEY_ID }}.p8
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v6
+
+      - name: Select Xcode 26.4
+        run: sudo xcode-select --switch /Applications/Xcode_26.4.app
+
+      - name: Validate required secrets
+        env:
+          API_KEY_ID: ${{ secrets.APP_STORE_CONNECT_API_KEY_ID }}
+          API_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
+          API_PRIVATE_KEY: ${{ secrets.APP_STORE_CONNECT_API_PRIVATE_KEY }}
+        run: |
+          test -n "$API_KEY_ID"
+          test -n "$API_ISSUER_ID"
+          test -n "$API_PRIVATE_KEY"
+
+      - name: Install App Store Connect API key
+        env:
+          API_PRIVATE_KEY: ${{ secrets.APP_STORE_CONNECT_API_PRIVATE_KEY }}
+        run: |
+          mkdir -p "$(dirname "$API_KEY_PATH")"
+          printf '%s' "$API_PRIVATE_KEY" > "$API_KEY_PATH"
+          chmod 600 "$API_KEY_PATH"
+
+      - name: Validate repository structure
+        run: Scripts/validate_structure.sh
+
+      - name: Run unit tests
+        run: |
+          xcodebuild test \
+            -project "$PROJECT_PATH" \
+            -scheme "$SCHEME" \
+            -configuration Debug \
+            -destination 'platform=macOS,arch=arm64' \
+            -derivedDataPath "${RUNNER_TEMP}/TestDerivedData" \
+            CODE_SIGNING_ALLOWED=NO \
+            -only-testing:'Project 24ZTests'
+
+      - name: Archive iOS app
+        run: |
+          xcodebuild archive \
+            -project "$PROJECT_PATH" \
+            -scheme "$SCHEME" \
+            -configuration Release \
+            -destination 'generic/platform=iOS' \
+            -archivePath "$ARCHIVE_PATH" \
+            -allowProvisioningUpdates \
+            -authenticationKeyPath "$API_KEY_PATH" \
+            -authenticationKeyID "${{ secrets.APP_STORE_CONNECT_API_KEY_ID }}" \
+            -authenticationKeyIssuerID "${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}" \
+            CURRENT_PROJECT_VERSION="${GITHUB_RUN_NUMBER}"
+
+      - name: Upload to TestFlight
+        run: |
+          xcodebuild -exportArchive \
+            -archivePath "$ARCHIVE_PATH" \
+            -exportPath "$EXPORT_PATH" \
+            -exportOptionsPlist Config/TestFlightExportOptions.plist \
+            -allowProvisioningUpdates \
+            -authenticationKeyPath "$API_KEY_PATH" \
+            -authenticationKeyID "${{ secrets.APP_STORE_CONNECT_API_KEY_ID }}" \
+            -authenticationKeyIssuerID "${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}"
+
+      - name: Remove private key
+        if: ${{ always() }}
+        run: rm -f "$API_KEY_PATH"

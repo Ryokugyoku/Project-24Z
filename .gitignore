@@ -1,0 +1,28 @@
+# macOS
+.DS_Store
+
+# Xcode user state
+*.xcuserstate
+xcuserdata/
+*.xcscmblueprint
+*.xccheckout
+
+# Build products
+DerivedData/
+.build/
+build/
+
+# Swift Package Manager
+.swiftpm/xcode/package.xcworkspace/contents.xcworkspacedata
+.swiftpm/xcode/xcuserdata/
+
+# Local runtime artifacts
+*.log
+*.sqlite-shm
+*.sqlite-wal
+
+# Secrets and local configuration
+.env
+.env.*
+!.env.example
+Secrets.xcconfig
