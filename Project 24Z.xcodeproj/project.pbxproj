@@ -6,6 +6,11 @@
 	objectVersion = 77;
 	objects = {
 
+/* Begin PBXBuildFile section */
+		A10000010000000000000001 /* GRDB in Frameworks */ = {isa = PBXBuildFile; productRef = A10000020000000000000001 /* GRDB */; };
+		A10000040000000000000001 /* GRDB in Frameworks */ = {isa = PBXBuildFile; productRef = A10000020000000000000001 /* GRDB */; };
+/* End PBXBuildFile section */
+
 /* Begin PBXContainerItemProxy section */
 		9CBF2279300AE41C00045828 /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
@@ -68,6 +73,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				A10000010000000000000001 /* GRDB in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -75,6 +81,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				A10000040000000000000001 /* GRDB in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -128,6 +135,7 @@
 			);
 			name = "Project 24Z";
 			packageProductDependencies = (
+				A10000020000000000000001 /* GRDB */,
 			);
 			productName = "Project 24Z";
 			productReference = 9CBF2267300AE41B00045828 /* Project 24Z.app */;
@@ -151,6 +159,7 @@
 			);
 			name = "Project 24ZTests";
 			packageProductDependencies = (
+				A10000020000000000000001 /* GRDB */,
 			);
 			productName = "Project 24ZTests";
 			productReference = 9CBF2278300AE41C00045828 /* Project 24ZTests.xctest */;
@@ -211,6 +220,9 @@
 			);
 			mainGroup = 9CBF225E300AE41B00045828;
 			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				A10000030000000000000001 /* XCRemoteSwiftPackageReference "GRDB.swift" */,
+			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = 9CBF2268300AE41B00045828 /* Products */;
 			projectDirPath = "";
@@ -635,6 +647,25 @@
 			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		A10000030000000000000001 /* XCRemoteSwiftPackageReference "GRDB.swift" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/groue/GRDB.swift.git";
+			requirement = {
+				kind = exactVersion;
+				version = 7.10.0;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		A10000020000000000000001 /* GRDB */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = A10000030000000000000001 /* XCRemoteSwiftPackageReference "GRDB.swift" */;
+			productName = GRDB;
+		};
+/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = 9CBF225F300AE41B00045828 /* Project object */;
 }
