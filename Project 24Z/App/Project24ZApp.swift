@@ -5,14 +5,12 @@ import SwiftUI
 @main
 struct Project24ZApp: App {
     private let modelContainer: ModelContainer
-    private let itemRepository: any ItemRepository
 
-    /// 永続化コンテナとリポジトリを一度だけ生成します。
+    /// 永続化コンテナを一度だけ生成します。
     init() {
         do {
             let container = try SwiftDataContainerFactory.makeContainer()
             modelContainer = container
-            itemRepository = SwiftDataItemRepository(modelContext: container.mainContext)
         } catch {
             fatalError("Failed to initialize persistence: \(error)")
         }
@@ -21,9 +19,9 @@ struct Project24ZApp: App {
     var body: some Scene {
         WindowGroup {
 #if os(macOS)
-            MacOSRootView(itemRepository: itemRepository)
+            MacOSRootView()
 #elseif os(iOS)
-            IOSRootView(itemRepository: itemRepository)
+            IOSRootView()
 #else
             UnsupportedPlatformView()
 #endif
