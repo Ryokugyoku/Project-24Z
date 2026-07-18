@@ -61,6 +61,14 @@ flowchart LR
 - Platformは表示と入力に専念します。iOSとmacOSは別々のViewツリーを持ちます。
 - Appだけが具象型を生成し、protocolへ接続します。
 
+## レイアウトとサービスの分離
+
+PlatformのViewは、Applicationが公開する画面状態を描画し、ユーザー操作をApplicationの操作境界へ通知します。Viewからサービス、ユースケース、Repository、OBD通信Adapter、永続化Adapterを生成または直接呼び出してはいけません。
+
+Applicationは画面に必要な状態遷移と操作を公開しますが、余白、配置、画面幅、NavigationSplitView、Toolbar placementなどのレイアウト情報を持ちません。DomainとDataもレイアウトを知りません。これにより、iOSまたはmacOSのViewツリーを全面的に作り直しても、Domain、Application、Dataの変更を不要にします。
+
+初期実装のUIは、機能要件とアクセシビリティを満たすApple標準部品による最小構成を原則とします。独自の視覚表現は、画面要件として承認された変更単位でPlatformへ追加します。
+
 ## 機能追加の単位
 
 機能は、必要な層だけに同じ機能名のまとまりを作ります。たとえばVehicle機能なら、`Domain/Models/Vehicle.swift`、`Application/Vehicles/`、`Platform/iOS/Features/Vehicles/`、`Platform/macOS/Features/Vehicles/` を使用します。空の層や将来用ファイルは作りません。

@@ -33,6 +33,10 @@
 - プラットフォーム条件はAppのルート選択、または各Platformファイル全体を囲む用途に限定します。
 - `body`内部で `#if os(iOS)` と `#if os(macOS)` を切り替える実装は禁止します。
 - ViewModel／Application Modelは共有できます。ただし画面サイズ、NavigationSplitView、Toolbar placementなどのレイアウト状態を持たせません。
+- Viewファイルには、サービス、ユースケース、Repository、通信・保存Adapter、その具象生成処理を置きません。
+- ViewはApplicationの画面状態を描画し、操作境界を呼び出すだけにします。表示用の整形が業務判断を含む場合はApplication、純粋な業務規則ならDomainへ置きます。
+- サービスは画面サイズ、余白、配置、色、アニメーション、ナビゲーションなどのレイアウト都合を受け取りません。
+- 初期画面は標準UI部品による最小構成とし、独自コンポーネントは複数画面で実際に必要になった時点、または承認済みの画面要件がある場合だけ追加します。
 - iPad対応はiOS配下で行い、利用可能領域とsize classに応じてiOS内で再構成します。
 - Preview、Snapshot、UI Testもプラットフォーム別に作ります。
 
