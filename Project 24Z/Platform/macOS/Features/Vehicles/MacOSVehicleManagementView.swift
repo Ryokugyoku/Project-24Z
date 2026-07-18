@@ -9,6 +9,9 @@ struct MacOSVehicleManagementView: View {
     /// 新規登録時に利用者が任意入力する表示名です。
     @State private var displayName = ""
 
+    /// Tab移動とキーボード登録で使用する表示名入力Focusです。
+    @FocusState private var isDisplayNameFocused: Bool
+
     /// 広いdetailでは内容自体を読みやすくし、狭い幅では縦にスクロールできる画面です。
     var body: some View {
         ScrollView {
@@ -19,10 +22,17 @@ struct MacOSVehicleManagementView: View {
                 actionGroup
             }
             .frame(maxWidth: 760, alignment: .leading)
-            .padding(24)
+            .padding(16)
             .frame(maxWidth: .infinity, alignment: .center)
         }
         .navigationTitle("車両管理")
+        .toolbar {
+            ToolbarItem(placement: .automatic) {
+                Label(model.state.display.title, systemImage: stateSystemImage)
+                    .labelStyle(.iconOnly)
+                    .accessibilityLabel("現在の状態、\(model.state.display.title)")
+            }
+        }
         .accessibilityIdentifier("project24z.vehicleRegistration.macos")
     }
 
@@ -32,6 +42,7 @@ struct MacOSVehicleManagementView: View {
             VStack(alignment: .leading, spacing: 12) {
                 Label(model.state.display.title, systemImage: stateSystemImage)
                     .font(.title2.weight(.semibold))
+                    .accessibilityLabel("現在の状態、\(model.state.display.title)")
                     .accessibilityIdentifier("project24z.vehicleRegistration.status")
 
                 Text(model.state.display.message)
@@ -180,6 +191,16 @@ struct MacOSVehicleManagementView: View {
                     unassignedSessionButtons(display: display)
                 case .registrationReady(let display):
                     TextField("車両の表示名（任意）", text: $displayName)
+                        .focused($isDisplayNameFocused)
+                        .onSubmit {
+                            isDisplayNameFocused = false
+                            model.perform(
+                                .confirmRegistration(
+                                    displayName: displayName.isEmpty ? nil : displayName,
+                                    revision: display.revision
+                                )
+                            )
+                        }
                         .accessibilityIdentifier("project24z.vehicleRegistration.displayName")
                     actionButton(
                         "車両を登録",
@@ -205,6 +226,7 @@ struct MacOSVehicleManagementView: View {
                 case .blocked:
                     Button("接続を開始") {}
                         .disabled(true)
+                        .accessibilityLabel("接続を開始、現在利用できません")
                         .accessibilityIdentifier("project24z.vehicleRegistration.primaryAction")
                 }
             }

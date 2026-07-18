@@ -6,6 +6,12 @@ final class GRDBVehicleIdentityStore {
     /// scope専用の車両Identity Repositoryです。
     let repository: GRDBVehicleIdentityRepository
 
+    /// 同じscope専用DBを使うAcquisition Repositoryです。
+    let acquisitionRepository: GRDBAcquisitionRepository
+
+    /// Hard Gate後の通信と分離されたローカル同期台帳Repositoryです。
+    let localSyncRepository: GRDBLocalSyncRepository
+
     /// テストと保全検査で共有するDatabasePoolです。
     let databasePool: DatabasePool
 
@@ -16,6 +22,8 @@ final class GRDBVehicleIdentityStore {
     private init(databasePool: DatabasePool, userScopeID: UUID) {
         self.databasePool = databasePool
         repository = GRDBVehicleIdentityRepository(databasePool: databasePool, userScopeID: userScopeID)
+        acquisitionRepository = GRDBAcquisitionRepository(databasePool: databasePool, userScopeID: userScopeID)
+        localSyncRepository = GRDBLocalSyncRepository(databasePool: databasePool, userScopeID: userScopeID)
     }
 
     /// DBを非破壊で開き、未知Version、Migration、整合性、scopeを検査します。
@@ -39,6 +47,9 @@ final class GRDBVehicleIdentityStore {
             var configuration = Configuration()
             configuration.foreignKeysEnabled = true
             configuration.busyMode = .timeout(5)
+            configuration.prepareDatabase { database in
+                SyncChainDigestV1.register(in: database)
+            }
             let pool = try DatabasePool(path: url.path, configuration: configuration)
 
             let applied = try pool.read { database -> [String] in

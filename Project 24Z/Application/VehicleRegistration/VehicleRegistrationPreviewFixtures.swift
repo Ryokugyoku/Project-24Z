@@ -263,6 +263,16 @@ enum VehicleRegistrationPreviewFixtures {
     /// - Returns: 対応するfixture。未知の名前では`nil`。
     static func state(named name: String) -> VehicleRegistrationPresentationState? {
         switch name {
+        case "blocked":
+            blocked
+        case "no-identifier":
+            identificationUnavailable
+        case "duplicate-active":
+            duplicateActive
+        case "duplicate-archived":
+            duplicateArchived
+        case "restore-required":
+            archivedRestoreRequired
         case "disconnected":
             disconnected
         case "adapter-checking":
@@ -275,6 +285,10 @@ enum VehicleRegistrationPreviewFixtures {
             restoreLifecycleRevisionConflict
         case "restore-failed":
             restoreFailed
+        case "conflict":
+            conflict
+        case "registration-ready":
+            registrationReady
         case "binding-pending":
             sessionBindingPending
         default:

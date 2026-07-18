@@ -9,6 +9,9 @@ struct IOSVehicleManagementView: View {
     /// 新規登録時に利用者が任意入力する表示名です。
     @State private var displayName = ""
 
+    /// Dynamic Type時もキーボードを明示的に閉じられる表示名入力Focusです。
+    @FocusState private var isDisplayNameFocused: Bool
+
     /// iPhone幅とDynamic Typeに追従する標準Formを表示します。
     var body: some View {
         Form {
@@ -18,6 +21,18 @@ struct IOSVehicleManagementView: View {
             actionSection
         }
         .navigationTitle("車両管理")
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Image(systemName: stateSystemImage)
+                    .accessibilityLabel("現在の状態、\(model.state.display.title)")
+            }
+            ToolbarItemGroup(placement: .keyboard) {
+                Spacer()
+                Button("完了") {
+                    isDisplayNameFocused = false
+                }
+            }
+        }
         .accessibilityIdentifier("project24z.vehicleRegistration.ios")
     }
 
@@ -27,6 +42,7 @@ struct IOSVehicleManagementView: View {
         Section("現在の状態") {
             Label(model.state.display.title, systemImage: stateSystemImage)
                 .font(.headline)
+                .accessibilityLabel("現在の状態、\(model.state.display.title)")
                 .accessibilityIdentifier("project24z.vehicleRegistration.status")
 
             Text(model.state.display.message)
@@ -153,6 +169,11 @@ struct IOSVehicleManagementView: View {
             case .registrationReady(let display):
                 TextField("車両の表示名（任意）", text: $displayName)
                     .textInputAutocapitalization(.words)
+                    .submitLabel(.done)
+                    .focused($isDisplayNameFocused)
+                    .onSubmit {
+                        isDisplayNameFocused = false
+                    }
                     .accessibilityIdentifier("project24z.vehicleRegistration.displayName")
                 actionButton(
                     "車両を登録",
@@ -178,6 +199,7 @@ struct IOSVehicleManagementView: View {
             case .blocked:
                 Button("接続を開始") {}
                     .disabled(true)
+                    .accessibilityLabel("接続を開始、現在利用できません")
                     .accessibilityIdentifier("project24z.vehicleRegistration.primaryAction")
             }
         }

@@ -1,7 +1,7 @@
 import Foundation
 
 /// 一接続中に応答した一つのECUの終端Snapshotです。
-struct ECUObservationSnapshot: Equatable, Sendable {
+nonisolated struct ECUObservationSnapshot: Equatable, Sendable {
     /// 応答元アドレスの形式です。
     enum AddressFormat: String, Equatable, Sendable {
         case can11Bit = "can_11_bit"

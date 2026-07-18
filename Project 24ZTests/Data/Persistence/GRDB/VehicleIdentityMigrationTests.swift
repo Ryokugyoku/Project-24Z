@@ -123,6 +123,23 @@ struct VehicleIdentityMigrationTests {
         #expect(try Data(contentsOf: fixture.url) == original)
     }
 
+    /// Foreign Key異常を検出して既存DBを空DBへ置換せず停止します。
+    @Test
+    func foreignKeyCheckFailureStopsWithoutFallback() throws {
+        let fixture=try TemporaryVehicleDatabase(); defer { fixture.remove() }
+        var store:GRDBVehicleIdentityStore?=try requireStore(GRDBVehicleIdentityStore.open(at:fixture.url,userScopeID:VehicleIdentityTestFixtures.scopeID,activeDigestKeyVersion:1))
+        store=nil
+        var configuration=Configuration(); configuration.foreignKeysEnabled=false
+        let queue=try DatabaseQueue(path:fixture.url.path,configuration:configuration)
+        let scope=VehicleIdentityTestFixtures.scopeID.uuidString.lowercased(), stamp=GRDBVehicleDateCodec.string(from:VehicleIdentityTestFixtures.recordedAt)
+        try queue.write { database in
+            try database.execute(sql:"INSERT INTO acquisition_streams(user_scope_id,stream_id,session_id,stream_kind,adapter_role,adapter_reference_id,connection_instance_id,stream_state,started_at_utc,ended_at_utc,next_record_sequence,next_chunk_sequence,record_revision,updated_at_utc) VALUES(?,?,?,'obd_pid','primary','broken-fk',?,'active',?,NULL,0,0,1,?)",arguments:[scope,UUID().uuidString.lowercased(),UUID().uuidString.lowercased(),UUID().uuidString.lowercased(),stamp,stamp])
+        }
+        guard case .unavailable(let unavailable)=GRDBVehicleIdentityStore.open(at:fixture.url,userScopeID:VehicleIdentityTestFixtures.scopeID,activeDigestKeyVersion:1) else { Issue.record("FK-invalid DB must stop"); return }
+        #expect(unavailable.reason == .corrupted)
+        #expect(try queue.read { try Int.fetchOne($0,sql:"SELECT COUNT(*) FROM acquisition_streams") } == 1)
+    }
+
     /// DB Check制約もvalid ScanのNULL vehicleを拒否します。
     @Test
     func schemaRejectsValidScanWithoutVehicle() throws {

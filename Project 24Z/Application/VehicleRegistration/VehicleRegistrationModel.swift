@@ -13,29 +13,29 @@ final class VehicleRegistrationModel: ObservableObject {
     /// 同じpresentationで処理済みとなったprocess内操作です。
     private var processedOperations: Set<VehicleRegistrationOperationKey> = []
 
-    /// Production依存が未実装である安全なblocked状態を生成します。
+    /// Production Composition済みApplicationサービスを生存期間中保持します。
+    private let productionServices: VehicleRegistrationProductionServices?
+
+    /// Compositionを経由しない呼出しを安全なblocked状態で生成します。
     init() {
-#if DEBUG
-        if let fixtureName = ProcessInfo.processInfo.environment[Self.fixtureEnvironmentKey],
-           let fixtureState = VehicleRegistrationPreviewFixtures.state(named: fixtureName) {
-            state = fixtureState
-            return
-        }
-#endif
+        productionServices = nil
         state = .blocked(Self.productionUnavailableDisplay)
+    }
+
+    /// Production Composition済みサービスを保持し、Hard Gate未達状態を公開します。
+    /// - Parameter productionServices: Data／Runtimeへ接続済みのApplicationサービス。
+    init(productionServices: VehicleRegistrationProductionServices) {
+        self.productionServices = productionServices
+        state = .blocked(Self.productionUnavailableDisplay(reason: productionServices.blockedReason))
     }
 
 #if DEBUG
     /// Previewと単体テストだけで任意の表示状態を生成します。
     /// - Parameter previewState: 表示検証に使用するfixture状態。
     init(previewState: VehicleRegistrationPresentationState) {
+        productionServices = nil
         state = previewState
     }
-#endif
-
-#if DEBUG
-    /// UIテストだけがfixture名を渡すlaunch environment keyです。
-    private static let fixtureEnvironmentKey = "PROJECT24Z_VEHICLE_REGISTRATION_FIXTURE"
 #endif
 
     /// Actionのrevisionと重複を検証し、未実装処理を成功させず拒否します。
@@ -80,11 +80,22 @@ final class VehicleRegistrationModel: ObservableObject {
 
     /// Productionで表示する安定した利用不能状態です。
     private static var productionUnavailableDisplay: VehicleRegistrationDisplayValues {
+        productionUnavailableDisplay(
+            reason: "Production Compositionが提供されていません。"
+        )
+    }
+
+    /// Production Hard Gate理由を持つ安全な利用不能表示を生成します。
+    /// - Parameter reason: 機密情報を含まない安定した停止理由。
+    /// - Returns: 登録成功を表さないblocked表示値。
+    private static func productionUnavailableDisplay(
+        reason: String
+    ) -> VehicleRegistrationDisplayValues {
         VehicleRegistrationDisplayValues(
             title: "車両登録は利用できません",
-            message: "安全な接続・識別・登録処理はまだ実装されていません。",
+            message: "安全条件を満たすまでProductionの接続・識別・登録を開始しません。",
             sessionSummary: "Sessionは車両未割当のまま保持されます。",
-            unavailableReason: "通信と車両登録のProduction実装が未提供です。",
+            unavailableReason: reason,
             actionDisabledReason: "接続、識別、登録、復元、Session所属は現在実行できません。",
             revision: VehicleRegistrationPresentationRevision(1)
         )

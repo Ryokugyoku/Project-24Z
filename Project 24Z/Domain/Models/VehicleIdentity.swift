@@ -1,7 +1,7 @@
 import Foundation
 
 /// 永続化方式に依存しない登録車両の状態です。
-struct VehicleIdentity: Equatable, Sendable {
+nonisolated struct VehicleIdentity: Equatable, Sendable {
     /// 車両のライフサイクル状態です。
     enum Lifecycle: String, Equatable, Sendable {
         /// 通常利用できる車両です。

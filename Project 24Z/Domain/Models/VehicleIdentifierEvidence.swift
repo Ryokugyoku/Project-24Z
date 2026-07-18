@@ -1,9 +1,9 @@
 import Foundation
 
 /// 暗号化とDigest計算を終えた登録根拠識別子です。
-struct VehicleIdentifierEvidence: Equatable, Sendable {
+nonisolated struct VehicleIdentifierEvidence: Equatable, Sendable {
     /// 登録可能な識別子種別です。
-    enum Kind: String, Equatable, Sendable {
+    enum Kind: String, Equatable, Hashable, Sendable {
         /// ISO VINです。
         case vin
         /// 国内車台番号です。

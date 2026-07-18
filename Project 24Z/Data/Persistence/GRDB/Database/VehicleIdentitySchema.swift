@@ -3,10 +3,10 @@ import GRDB
 /// Vehicle Identity Storeのv1物理schemaだけを定義します。
 enum VehicleIdentitySchema {
     /// リリース後に変更しない初回Migration識別子です。
-    static let v1MigrationIdentifier = "v1_create_vehicle_identity_store"
+    nonisolated static let v1MigrationIdentifier = "v1_create_vehicle_identity_store"
 
     /// v1の全テーブル、Index、保全Triggerを作成するSQLです。
-    static let v1SQL = """
+    nonisolated static let v1SQL = """
     CREATE TABLE database_scope (
       scope_row_id INTEGER PRIMARY KEY CHECK (scope_row_id = 1),
       user_scope_id TEXT NOT NULL UNIQUE CHECK (length(user_scope_id) = 36),

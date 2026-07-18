@@ -31,7 +31,7 @@ struct MacOSAppShellView: View {
                 vehicleRegistrationModel: vehicleRegistrationModel
             )
         }
-        .frame(minWidth: 760, minHeight: 480)
+        .frame(minWidth: 480, minHeight: 420)
     }
 }
 

@@ -1,7 +1,7 @@
 import Foundation
 
 /// 一つのECUから得た一つの識別値の終端Snapshotです。
-struct ECUIdentificationValueSnapshot: Equatable, Sendable {
+nonisolated struct ECUIdentificationValueSnapshot: Equatable, Sendable {
     /// Decode済み値の意味を示す安定コードです。
     enum ValueKind: String, Equatable, Sendable {
         case vin

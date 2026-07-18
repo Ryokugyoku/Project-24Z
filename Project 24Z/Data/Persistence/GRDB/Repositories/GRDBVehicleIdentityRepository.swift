@@ -79,6 +79,17 @@ final class GRDBVehicleIdentityRepository: VehicleIdentityRepository {
                     throw VehiclePersistenceError.conflict
                 }
 
+                if let expectedVehicleID = request.expectedCandidateVehicleID,
+                   let expectedRevision = request.expectedCandidateLifecycleRevision {
+                    guard let candidate = matched.first,
+                          candidate.vehicleID == expectedVehicleID,
+                          candidate.lifecycleRevision == expectedRevision else {
+                        throw VehiclePersistenceError.conflict
+                    }
+                } else if request.expectedCandidateVehicleID != nil || request.expectedCandidateLifecycleRevision != nil {
+                    throw VehiclePersistenceError.invalidRequest
+                }
+
                 let vehicleID = matched.first?.vehicleID ?? request.proposedVehicleID
                 if try scanExists(database: database, obdConnectionID: request.scan.obdConnectionID) {
                     guard try snapshotMatches(
@@ -321,6 +332,9 @@ final class GRDBVehicleIdentityRepository: VehicleIdentityRepository {
             }
             try validateEncryptedValue(identifier.encryptedNormalizedValue)
         }
+        if let revision = request.expectedCandidateLifecycleRevision, revision < 1 {
+            throw VehiclePersistenceError.invalidRequest
+        }
         try validateSnapshot(request.scan)
     }
 
@@ -424,7 +438,7 @@ final class GRDBVehicleIdentityRepository: VehicleIdentityRepository {
         let rows = try Row.fetchAll(
             database,
             sql: """
-            SELECT v.* FROM vehicle_identifiers i
+            SELECT v.* FROM active_or_local_vehicle_identifiers i
             JOIN vehicles v ON v.user_scope_id = i.user_scope_id AND v.vehicle_id = i.vehicle_id
             WHERE i.user_scope_id = ? AND i.identifier_kind = ? AND i.lookup_digest = ?
             LIMIT 2
@@ -571,6 +585,7 @@ final class GRDBVehicleIdentityRepository: VehicleIdentityRepository {
         database: Database,
         snapshot: VehicleIdentificationScanSnapshot
     ) throws {
+        // raw table access: 同じ登録transaction内で直前INSERTの完全性を検査します。
         let observationCount = try Int.fetchOne(
             database,
             sql: "SELECT COUNT(*) FROM ecu_observations WHERE user_scope_id = ? AND scan_id = ?",
@@ -597,6 +612,7 @@ final class GRDBVehicleIdentityRepository: VehicleIdentityRepository {
     ///   - obdConnectionID: 一接続UUID。
     /// - Returns: 既存行があればtrue。
     private func scanExists(database: Database, obdConnectionID: UUID) throws -> Bool {
+        // raw table access: commit結果不明時の再試行判定で未公開行も同一内容か検査します。
         try Bool.fetchOne(
             database,
             sql: "SELECT EXISTS(SELECT 1 FROM vehicle_identification_scans WHERE user_scope_id = ? AND obd_connection_id = ?)",
@@ -619,6 +635,7 @@ final class GRDBVehicleIdentityRepository: VehicleIdentityRepository {
         deviceID: UUID,
         recordedAt: Date
     ) throws -> Bool {
+        // raw table access: commit結果不明時の全列照合で未公開行も監査します。
         guard let row = try Row.fetchOne(
             database,
             sql: "SELECT * FROM vehicle_identification_scans WHERE user_scope_id = ? AND obd_connection_id = ?",
@@ -641,6 +658,7 @@ final class GRDBVehicleIdentityRepository: VehicleIdentityRepository {
               (row["created_at"] as String) == GRDBVehicleDateCodec.string(from: recordedAt),
               (row["created_by_device_id"] as String) == uuidString(deviceID) else { return false }
 
+        // raw table access: commit結果不明時の全列照合で子行も監査します。
         let observationRows = try Row.fetchAll(
             database,
             sql: "SELECT * FROM ecu_observations WHERE user_scope_id = ? AND scan_id = ? ORDER BY observation_ordinal",
@@ -652,6 +670,7 @@ final class GRDBVehicleIdentityRepository: VehicleIdentityRepository {
                   (observationRow["observation_ordinal"] as Int) == observation.ordinal,
                   (observationRow["responder_address_format"] as String) == observation.addressFormat.rawValue,
                   (observationRow["responder_address"] as Data) == observation.responderAddress else { return false }
+            // raw table access: commit結果不明時の全列照合で孫行も監査します。
             let valueRows = try Row.fetchAll(
                 database,
                 sql: "SELECT * FROM ecu_identification_values WHERE user_scope_id = ? AND ecu_observation_id = ? ORDER BY info_type_code, occurrence_ordinal",

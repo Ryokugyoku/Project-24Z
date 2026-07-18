@@ -205,6 +205,37 @@ struct GRDBVehicleIdentityRepositoryTests {
         #expect(reread?.lifecycleRevision == archived.lifecycleRevision + 1)
     }
 
+    /// active重複候補のstale Lifecycle Revisionをtransaction内で拒否します。
+    @Test
+    func activeDuplicateRechecksCandidateRevisionInsideTransaction() throws {
+        let fixture = try TemporaryVehicleDatabase()
+        defer { fixture.remove() }
+        let store = try makeStore(fixture)
+        let first = VehicleIdentityTestFixtures.registrationRequest(digestByte: 21)
+        guard case .registered(let vehicle) = try store.repository.register(first) else {
+            Issue.record("初期登録が必要です。")
+            return
+        }
+        let next = VehicleIdentityTestFixtures.registrationRequest(digestByte: 21)
+        let stale = VehicleRegistrationRequest(
+            proposedVehicleID: next.proposedVehicleID,
+            encryptedDisplayName: next.encryptedDisplayName,
+            identifiers: next.identifiers,
+            scan: next.scan,
+            deviceID: next.deviceID,
+            recordedAt: next.recordedAt,
+            expectedCandidateVehicleID: vehicle.vehicleID,
+            expectedCandidateLifecycleRevision: vehicle.lifecycleRevision + 1
+        )
+        #expect(throws: VehiclePersistenceError.conflict) {
+            try store.repository.register(stale)
+        }
+        let scanCount = try store.databasePool.read {
+            try Int.fetchOne($0, sql: "SELECT COUNT(*) FROM vehicle_identification_scans")
+        }
+        #expect(scanCount == 1)
+    }
+
     /// fixture用Storeを起動します。
     /// - Parameter fixture: テスト専用DBパス。
     /// - Returns: 利用可能GRDB Store。

@@ -1,7 +1,7 @@
 import Foundation
 
 /// 一OBD接続から確定した、追記専用の最終識別Snapshotです。
-struct VehicleIdentificationScanSnapshot: Equatable, Sendable {
+nonisolated struct VehicleIdentificationScanSnapshot: Equatable, Sendable {
     /// スキャンの終端状態です。
     enum Status: String, Equatable, Sendable {
         case completed

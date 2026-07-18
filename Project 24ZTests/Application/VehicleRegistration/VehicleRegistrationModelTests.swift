@@ -19,6 +19,40 @@ struct VehicleRegistrationModelTests {
         #expect(model.state.isRegistered == false)
     }
 
+    /// Production Composition済みサービスがHard Gate理由付きblockedを公開することを検証します。
+    @Test
+    func productionServicesRemainBlockedWithoutHardGates() {
+        let runtime = UnavailablePIDVehicleRuntime()
+#if os(iOS)
+        let transport: any CommunicationTransport = IOSUnavailableWirelessTransport()
+#else
+        let transport: any CommunicationTransport = MacOSUnavailableTransport()
+#endif
+        let services = VehicleRegistrationProductionServices(
+            workflow: VehicleRegistrationWorkflow(
+                vehicleRepository: UnavailableVehicleIdentityRepository(),
+                bindingRepository: UnavailableSessionVehicleBindingRepository()
+            ),
+            connectionRuntime: ConnectionRuntime(
+                role: .primaryOBD,
+                adapterReference: AdapterReference(opaqueID: "test-production-unavailable"),
+                transport: transport,
+                sink: UnavailableAcquisitionEventSink()
+            ),
+            supportDiscoveryCoordinator: PIDSupportDiscoveryCoordinator(runtime: runtime),
+            adaptivePollingCoordinator: AdaptivePollingCoordinator(runtime: runtime),
+            blockedReason: "PID-HG-02／03／06が未達です。"
+        )
+        let model = VehicleRegistrationModel(productionServices: services)
+
+        guard case .blocked(let display) = model.state else {
+            Issue.record("Hard Gate未達のProduction Compositionはblockedである必要があります。")
+            return
+        }
+        #expect(display.unavailableReason?.contains("PID-HG-02") == true)
+        #expect(model.state.isRegistered == false)
+    }
+
     /// Production blocked状態の未実装Actionが成功状態へ遷移しないことを検証します。
     @Test
     func unavailableProductionActionDoesNotRegisterVehicle() {

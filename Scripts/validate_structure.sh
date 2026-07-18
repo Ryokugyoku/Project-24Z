@@ -55,3 +55,7 @@ if [ "$failure_count" -ne 0 ]; then
 fi
 
 echo "Structure validation passed."
+
+"$repository_root/Scripts/validate_docc.sh" || exit 1
+"$repository_root/Scripts/validate_design_documents.sh" || exit 1
+"$repository_root/Scripts/validate_persistence_contracts.sh" || exit 1

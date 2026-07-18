@@ -4,18 +4,24 @@ import SwiftUI
 /// Project 24Z の依存関係を組み立て、実行プラットフォーム固有の画面へ渡す起点です。
 @main
 struct Project24ZApp: App {
-    /// アプリ全体で共有するSwiftDataコンテナです。
-    private let modelContainer: ModelContainer
+    /// Productionの依存関係と生存期間を所有します。
+    private let productionComposition: Project24ZProductionComposition
 
     /// Productionの安全な車両登録画面状態を保持します。
     @StateObject private var vehicleRegistrationModel: VehicleRegistrationModel
 
     /// 永続化コンテナを一度だけ生成します。
     init() {
-        _vehicleRegistrationModel = StateObject(wrappedValue: VehicleRegistrationModel())
         do {
-            let container = try SwiftDataContainerFactory.makeContainer()
-            modelContainer = container
+            let composition = try Project24ZProductionComposition()
+            productionComposition = composition
+#if DEBUG
+            let model = Project24ZDebugFixtureComposition.vehicleRegistrationModel()
+                ?? composition.vehicleRegistrationModel
+#else
+            let model = composition.vehicleRegistrationModel
+#endif
+            _vehicleRegistrationModel = StateObject(wrappedValue: model)
         } catch {
             fatalError("Failed to initialize persistence: \(error)")
         }
@@ -23,16 +29,23 @@ struct Project24ZApp: App {
 
     /// 実行Platform固有のRootへComposition済み依存を渡します。
     var body: some Scene {
-        WindowGroup {
 #if os(macOS)
+        WindowGroup {
             MacOSRootView(vehicleRegistrationModel: vehicleRegistrationModel)
-#elseif os(iOS)
-            IOSRootView(vehicleRegistrationModel: vehicleRegistrationModel)
-#else
-            UnsupportedPlatformView()
-#endif
         }
-        .modelContainer(modelContainer)
+        .defaultSize(width: 900, height: 640)
+        .modelContainer(productionComposition.modelContainer)
+#elseif os(iOS)
+        WindowGroup {
+            IOSRootView(vehicleRegistrationModel: vehicleRegistrationModel)
+        }
+        .modelContainer(productionComposition.modelContainer)
+#else
+        WindowGroup {
+            UnsupportedPlatformView()
+        }
+        .modelContainer(productionComposition.modelContainer)
+#endif
     }
 }
 
