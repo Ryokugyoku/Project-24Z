@@ -3,8 +3,13 @@ import SwiftUI
 
 /// iOSでサイドバーと選択中画面を構成します。
 struct IOSAppShellView: View {
+    /// iOSの主要画面選択を保持するSession Modelです。
     @ObservedObject var session: AppSessionModel
 
+    /// 車両管理画面へ渡すApplication Modelです。
+    @ObservedObject var vehicleRegistrationModel: VehicleRegistrationModel
+
+    /// iOS専用のサイドバーとdetailを構成します。
     var body: some View {
         NavigationSplitView {
             List(selection: $session.selectedDestination) {
@@ -20,21 +25,29 @@ struct IOSAppShellView: View {
             }
             .navigationTitle("Project 24Z")
         } detail: {
-            IOSSelectedDestinationView(destination: session.selectedDestination)
+            IOSSelectedDestinationView(
+                destination: session.selectedDestination,
+                vehicleRegistrationModel: vehicleRegistrationModel
+            )
         }
     }
 }
 
 /// iOSのサイドバー選択に対応する画面を表示します。
 private struct IOSSelectedDestinationView: View {
+    /// 現在選択されている主要画面です。
     let destination: AppDestination?
 
+    /// 車両管理画面へ渡すApplication Modelです。
+    @ObservedObject var vehicleRegistrationModel: VehicleRegistrationModel
+
+    /// 選択状態に対応するiOS専用画面を表示します。
     var body: some View {
         switch destination {
         case .home:
             IOSHomeView()
         case .vehicleManagement:
-            IOSVehicleManagementView()
+            IOSVehicleManagementView(model: vehicleRegistrationModel)
         case nil:
             ContentUnavailableView("画面を選択してください", systemImage: "sidebar.left")
         }
