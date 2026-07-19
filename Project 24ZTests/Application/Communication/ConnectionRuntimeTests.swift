@@ -68,14 +68,17 @@ struct ConnectionRuntimeTests {
     @Test
     func cancellationInvalidatesGeneration() async throws {
         let transport = FakeCommunicationTransport()
-        let runtime = ConnectionRuntime(role: .primaryOBD, adapterReference: .init(opaqueID: "adapter-a"), transport: transport, sink: FakeAcquisitionEventSink())
+        let sink = FakeAcquisitionEventSink()
+        let runtime = ConnectionRuntime(role: .primaryOBD, adapterReference: .init(opaqueID: "adapter-a"), transport: transport, sink: sink)
         try await runtime.connect(to: .init(identifier: "endpoint", kind: .bluetoothClassic))
         await runtime.cancel()
+        await transport.emit(.received(Data([0xCC])), generation: .init(value: 1))
         await transport.emit(.disconnected, generation: .init(value: 1))
         try await Task.sleep(for: .milliseconds(5))
 
         #expect(await runtime.state == .idle)
-        #expect(await runtime.staleEventCount == 1)
+        #expect(await runtime.staleEventCount == 2)
+        #expect(await sink.eventCount() == 0)
     }
 
     /// 非同期callbackの反映を短い上限内で待ちます。

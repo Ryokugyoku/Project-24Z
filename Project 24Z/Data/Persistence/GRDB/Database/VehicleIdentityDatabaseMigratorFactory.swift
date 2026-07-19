@@ -9,6 +9,7 @@ enum VehicleIdentityDatabaseMigratorFactory {
         AcquisitionStorageSchema.v2MigrationIdentifier,
         SyncPersistenceSchema.v3MigrationIdentifier,
         SyncPersistenceHardeningSchema.v4MigrationIdentifier,
+        ConnectionSettingsSchema.v5MigrationIdentifier,
     ]
 
     /// ユーザースコープを初回schemaへ固定するMigratorを生成します。
@@ -55,6 +56,13 @@ enum VehicleIdentityDatabaseMigratorFactory {
         }
         migrator.registerMigration(SyncPersistenceHardeningSchema.v4MigrationIdentifier) { database in
             try database.execute(sql: SyncPersistenceHardeningSchema.v4SQL)
+            let foreignKeyFailures = try Row.fetchAll(database, sql: "PRAGMA foreign_key_check")
+            guard foreignKeyFailures.isEmpty else {
+                throw VehiclePersistenceError.unavailable
+            }
+        }
+        migrator.registerMigration(ConnectionSettingsSchema.v5MigrationIdentifier) { database in
+            try database.execute(sql: ConnectionSettingsSchema.v5SQL)
             let foreignKeyFailures = try Row.fetchAll(database, sql: "PRAGMA foreign_key_check")
             guard foreignKeyFailures.isEmpty else {
                 throw VehiclePersistenceError.unavailable

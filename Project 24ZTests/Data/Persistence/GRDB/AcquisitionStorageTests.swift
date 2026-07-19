@@ -177,12 +177,159 @@ struct AcquisitionStorageTests {
         let store = try open(fixture)
         let first = makeSessionValues()
         try store.acquisitionRepository.start(session: first.session,streams: first.streams,epoch: first.epoch)
-        try store.acquisitionRepository.finishSession(sessionID: first.session.sessionID,expectedSessionRevision: 1,reason: .userStop,endedAt: first.session.startedAt.addingTimeInterval(5),deviceID: first.session.createdByDeviceID)
+        let context = try store.acquisitionRepository.requestStop(sessionID: first.session.sessionID, requestedAt: first.session.startedAt.addingTimeInterval(4), deviceID: first.session.createdByDeviceID)
+        try store.acquisitionRepository.completeStop(context, endedAt: first.session.startedAt.addingTimeInterval(5), deviceID: first.session.createdByDeviceID)
         let second = makeSessionValues()
         try store.acquisitionRepository.start(session: second.session,streams: [second.streams[0]],epoch: second.epoch)
         let firstRow = try store.databasePool.read { try Row.fetchOne($0, sql: "SELECT vehicle_id,capture_state FROM acquisition_sessions WHERE session_id=?", arguments: [first.session.sessionID.uuidString.lowercased()]) }
         #expect((firstRow?["vehicle_id"] as String?) == nil)
         #expect((firstRow?["capture_state"] as String?) == "ended_cleanly")
+    }
+
+    /// 停止要求はSessionと全Streamを先にstop_requestedへ原子的に遷移させます。
+    @Test
+    func stopRequestPrecedesCleanCompletion() throws {
+        let fixture = try TemporaryVehicleDatabase()
+        defer { fixture.remove() }
+        let store = try open(fixture)
+        let values = makeSessionValues()
+        try store.acquisitionRepository.start(session: values.session, streams: values.streams, epoch: values.epoch)
+
+        let context = try store.acquisitionRepository.requestStop(sessionID: values.session.sessionID, requestedAt: values.session.startedAt.addingTimeInterval(1), deviceID: values.session.createdByDeviceID)
+        let requested = try store.databasePool.read { database in
+            (
+                try String.fetchOne(database, sql: "SELECT capture_state FROM acquisition_sessions"),
+                try String.fetchAll(database, sql: "SELECT stream_state FROM acquisition_streams ORDER BY stream_kind")
+            )
+        }
+        #expect(requested.0 == "stop_requested")
+        #expect(requested.1 == ["stop_requested", "stop_requested"])
+
+        let finalQueuedReservation = try store.acquisitionRepository.reserveChunk(
+            streamID: values.streams[0].streamID,
+            recordCount: 1,
+            expectedStreamRevision: 2,
+            updatedAt: values.session.startedAt.addingTimeInterval(1.5)
+        )
+        #expect(finalQueuedReservation.firstRecordSequence == 0)
+
+        try store.acquisitionRepository.completeStop(context, endedAt: values.session.startedAt.addingTimeInterval(2), deviceID: values.session.createdByDeviceID)
+        let completed = try store.databasePool.read { database in
+            (
+                try String.fetchOne(database, sql: "SELECT capture_state FROM acquisition_sessions"),
+                try String.fetchAll(database, sql: "SELECT stream_state FROM acquisition_streams ORDER BY stream_kind")
+            )
+        }
+        #expect(completed.0 == "ended_cleanly")
+        #expect(completed.1 == ["stopped", "stopped"])
+    }
+
+    /// 停止途中の保存障害は正常終了へ昇格せず既存Chunkを保持します。
+    @Test
+    func stopFailureRequiresRecoveryAndPreservesChunks() throws {
+        let fixture = try TemporaryVehicleDatabase()
+        defer { fixture.remove() }
+        let store = try open(fixture)
+        let values = makeSessionValues()
+        try store.acquisitionRepository.start(session: values.session, streams: [values.streams[0]], epoch: values.epoch)
+        let reservation = try store.acquisitionRepository.reserveChunk(streamID: values.streams[0].streamID, recordCount: 1, expectedStreamRevision: 1, updatedAt: values.session.startedAt.addingTimeInterval(1))
+        var entry = entryFor(reservation: reservation, epochID: values.epoch.clockEpochID, createdAt: values.session.startedAt.addingTimeInterval(2))
+        entry = entryWithDigest(entry, try SHA256AcquisitionChunkCatalogDigester().digest(for: entry))
+        _ = try store.acquisitionRepository.commitChunk(entry)
+        _ = try store.acquisitionRepository.requestStop(sessionID: values.session.sessionID, requestedAt: values.session.startedAt.addingTimeInterval(3), deviceID: values.session.createdByDeviceID)
+
+        try store.acquisitionRepository.requireRecovery(sessionID: values.session.sessionID, reason: .writePipelineFailure, endedAt: values.session.startedAt.addingTimeInterval(4), deviceID: values.session.createdByDeviceID)
+
+        let state = try store.databasePool.read { database in
+            (
+                try String.fetchOne(database, sql: "SELECT capture_state FROM acquisition_sessions"),
+                try String.fetchOne(database, sql: "SELECT stream_state FROM acquisition_streams"),
+                try Int.fetchOne(database, sql: "SELECT COUNT(*) FROM log_chunks")
+            )
+        }
+        #expect(state.0 == "recovery_required")
+        #expect(state.1 == "interrupted")
+        #expect(state.2 == 1)
+    }
+
+    /// interrupted Streamを含むSessionは正常終了へ昇格しません。
+    @Test
+    func cleanCompletionRejectsInterruptedStream() throws {
+        let fixture = try TemporaryVehicleDatabase()
+        defer { fixture.remove() }
+        let store = try open(fixture)
+        let values = makeSessionValues()
+        try store.acquisitionRepository.start(session: values.session, streams: values.streams, epoch: values.epoch)
+        let context = try store.acquisitionRepository.requestStop(
+            sessionID: values.session.sessionID,
+            requestedAt: values.session.startedAt.addingTimeInterval(1),
+            deviceID: values.session.createdByDeviceID
+        )
+        let interruptedAt = GRDBVehicleDateCodec.string(from: values.session.startedAt.addingTimeInterval(1.5))
+        try store.databasePool.write { database in
+            try database.execute(
+                sql: "UPDATE acquisition_streams SET stream_state='interrupted',ended_at_utc=?,record_revision=record_revision+1,updated_at_utc=? WHERE stream_id=?",
+                arguments: [interruptedAt, interruptedAt, values.streams[1].streamID.uuidString.lowercased()]
+            )
+        }
+
+        #expect(throws: AcquisitionPersistenceError.self) {
+            try store.acquisitionRepository.completeStop(
+                context,
+                endedAt: values.session.startedAt.addingTimeInterval(2),
+                deviceID: values.session.createdByDeviceID
+            )
+        }
+
+        try store.acquisitionRepository.requireRecovery(
+            sessionID: values.session.sessionID,
+            reason: .unknown,
+            endedAt: values.session.startedAt.addingTimeInterval(3),
+            deviceID: values.session.createdByDeviceID
+        )
+        let state = try store.databasePool.read { database in
+            (
+                try String.fetchOne(database, sql: "SELECT capture_state FROM acquisition_sessions"),
+                try String.fetchAll(database, sql: "SELECT stream_state FROM acquisition_streams ORDER BY stream_kind")
+            )
+        }
+        #expect(state.0 == "recovery_required")
+        #expect(state.1 == ["interrupted", "interrupted"])
+    }
+
+    /// 開放Gapを含むSessionは正常終了へ昇格しません。
+    @Test
+    func cleanCompletionRejectsOpenGap() throws {
+        let fixture = try TemporaryVehicleDatabase()
+        defer { fixture.remove() }
+        let store = try open(fixture)
+        let values = makeSessionValues()
+        try store.acquisitionRepository.start(session: values.session, streams: [values.streams[0]], epoch: values.epoch)
+        let context = try store.acquisitionRepository.requestStop(
+            sessionID: values.session.sessionID,
+            requestedAt: values.session.startedAt.addingTimeInterval(1),
+            deviceID: values.session.createdByDeviceID
+        )
+        let scope = VehicleIdentityTestFixtures.scopeID.uuidString.lowercased()
+        let startUTC = GRDBVehicleDateCodec.string(from: values.session.startedAt.addingTimeInterval(0.5))
+        try store.databasePool.write { database in
+            try database.execute(
+                sql: "INSERT INTO acquisition_gaps(user_scope_id,gap_id,session_id,stream_id,reason_code,detection_method,start_boundary_certainty,start_clock_epoch_id,start_monotonic_ns,start_utc,end_clock_epoch_id,end_monotonic_ns,end_utc,end_boundary_certainty,first_missing_sequence,missing_record_count,revision,created_at_utc) VALUES(?,?,?,?,'unknown','unknown','estimated',?,NULL,?,NULL,NULL,NULL,NULL,NULL,NULL,1,?)",
+                arguments: [scope, UUID().uuidString.lowercased(), values.session.sessionID.uuidString.lowercased(), values.streams[0].streamID.uuidString.lowercased(), values.epoch.clockEpochID.uuidString.lowercased(), startUTC, startUTC]
+            )
+        }
+
+        #expect(throws: AcquisitionPersistenceError.self) {
+            try store.acquisitionRepository.completeStop(
+                context,
+                endedAt: values.session.startedAt.addingTimeInterval(2),
+                deviceID: values.session.createdByDeviceID
+            )
+        }
+        let captureState = try store.databasePool.read {
+            try String.fetchOne($0, sql: "SELECT capture_state FROM acquisition_sessions")
+        }
+        #expect(captureState == "stop_requested")
     }
 
     /// Migration済みStoreを取り出します。

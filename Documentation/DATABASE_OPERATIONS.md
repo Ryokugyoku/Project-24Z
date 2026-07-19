@@ -31,6 +31,8 @@
 | Logical Sync Change / Delivery / Receipt | GRDB | `LocalSyncRepository` | Origin EnvelopeとOrigin Sequence／ChainをPeer別配送・受領から分離 |
 | Vehicle Alias / Materialization / Conflict | GRDB | `LocalSyncRepository` | graph generation履歴、expected digest、競合・隔離を非破壊保持 |
 | Session / Chunk Transfer Progress | GRDB + immutable staging/final file | `LocalSyncRepository` / `ImmutableChunkFileStore` | Segment進捗とDurable ACK条件。bytesはDBへ保存しない |
+| 端末別Primary／Secondary既定Adapter候補 | GRDB | `DefaultAdapterRepository` | User Scope＋local device scope＋roleごとにActive最大1件。Endpoint Digestと非機密表示名を保持し、端末間同期しない |
+| 確認済みAdapter Identity Binding | GRDB | `DefaultAdapterRepository` | 接続後の承認済みIdentity確認だけを追記。候補表示名やOS identifierをIdentity証拠にしない |
 
 ## 変更ルール
 
@@ -95,3 +97,21 @@ Data/Persistence/GRDB/
 - 新規INSERTはそれぞれ `manifest_pending`、`pending`、`expected`、`received` だけを許可する。旧v3の途中／終端行は削除・推測補正せずstep 0のまま保持し、正規遷移来歴を証明できないためDurable ACK対象から隔離する。
 - `origin_entity_materializations` はINSERT後、状態、適用時刻、superseded参照、監査用updated／revision列以外を変更できない。Origin、Alias、generation、親子、canonical Vehicle、Entity／materialized ID、projection情報の変更はDB Triggerが拒否する。
 - down-migrationは行わない。v4失敗はALTER／Trigger追加transaction全体をrollbackし、旧v3業務行、Migration記録、外部Chunk fileを保持する。
+
+## Connection Settings v5
+
+- Migration IDは `v5_create_connection_settings`。v1からv4へ追記し、既存Vehicle、Session、Chunk、同期台帳、外部fileを変換・削除しない。
+- `default_adapter_candidates` はUser Scope、local device scope、Platform、固定role、32 byte Endpoint Digest、非機密表示名、Transport種別、Revision、監査日時を保持する。OS identifier、MAC address、USB serial、Raw advertisementは通常表示列へ保存しない。
+- partial unique indexにより端末scope／roleごとのActive候補を最大1件、端末scope内の同一Endpoint DigestをActive最大1件に制限する。通常変更は旧行を明示deactivateして新監査行をINSERTし、解除でも物理削除しない。
+- `verified_adapter_bindings` は接続後に確認したAdapterReferenceのSHA-256 Digest、確認規則Version、確認日時をActive候補へ追記する。Identity不明値を保存するNULL状態は持たず、一候補一bindingと、現在Activeな役割間の物理参照一意Triggerを適用する。解除済み履歴は保持し、明示再選択後の再確認を永久に妨げない。
+- 候補とbindingは過去Acquisition SessionへForeign Keyまたはcascadeを持たず、設定変更・解除で過去Session、Stream、Gap、Chunk、Vehicleを更新・削除しない。
+- v5 Migration失敗はDDL全体をrollbackし、既存v1からv4のschemaと業務行を保持する。down-migration、既存DB削除、空DB Fallbackは行わない。
+- 認証済みUser Scope、承認済みlocal device scope、正式対応Adapter／firmware／TransportのHard GateがComposition Rootへ接続されるまで、Production Repositoryは明示的unavailableとし、架空scopeのGRDBを作成しない。
+
+## Development Database Browser read-only運用
+
+- `PROJECT24Z_DEVELOPMENT_DATABASE_BROWSER` 専用compile flagがある構成だけに型、Navigation、表示文字列、Adapterを含める。通常DebugとApp Store提出用Releaseではflagを定義しない。
+- GRDBは起動時検査済み`DatabasePool`のread closureだけを使用し、`sqlite_schema`から`sqlite_%`を除くApplication tableを動的列挙する。直前の列挙結果と一致しないtable名は拒否し、任意SQL、write、Migration、修復、ATTACH、Exportを公開しない。
+- SwiftDataは`Item`をSwiftData API経由の明示論理データセットとして読み、内部SQLiteを直接openしない。
+- pageは最大500行の短いread単位とし、NULL、TEXT、INTEGER、REAL、BLOBを区別する。BLOBは推測Decodeや復号をせず、Chunk file、Keychain、秘密鍵へアクセスしない。
+- `Scripts/validate_development_database_browser_boundary.sh`でApp Store向けmacOS／iOS Simulator Release binaryに開発専用symbol／表示文字列が残らないことを検査する。

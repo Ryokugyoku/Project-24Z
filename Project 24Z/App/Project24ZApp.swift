@@ -31,13 +31,31 @@ struct Project24ZApp: App {
     var body: some Scene {
 #if os(macOS)
         WindowGroup {
+#if PROJECT24Z_DEVELOPMENT_DATABASE_BROWSER
             MacOSRootView(vehicleRegistrationModel: vehicleRegistrationModel)
+                .environmentObject(productionComposition.connectionSettingsModel)
+                .environmentObject(productionComposition.dashboardModel)
+                .environmentObject(productionComposition.developmentDatabaseBrowserModel)
+#else
+            MacOSRootView(vehicleRegistrationModel: vehicleRegistrationModel)
+                .environmentObject(productionComposition.connectionSettingsModel)
+                .environmentObject(productionComposition.dashboardModel)
+#endif
         }
         .defaultSize(width: 900, height: 640)
         .modelContainer(productionComposition.modelContainer)
 #elseif os(iOS)
         WindowGroup {
+#if PROJECT24Z_DEVELOPMENT_DATABASE_BROWSER
             IOSRootView(vehicleRegistrationModel: vehicleRegistrationModel)
+                .environmentObject(productionComposition.connectionSettingsModel)
+                .environmentObject(productionComposition.dashboardModel)
+                .environmentObject(productionComposition.developmentDatabaseBrowserModel)
+#else
+            IOSRootView(vehicleRegistrationModel: vehicleRegistrationModel)
+                .environmentObject(productionComposition.connectionSettingsModel)
+                .environmentObject(productionComposition.dashboardModel)
+#endif
         }
         .modelContainer(productionComposition.modelContainer)
 #else

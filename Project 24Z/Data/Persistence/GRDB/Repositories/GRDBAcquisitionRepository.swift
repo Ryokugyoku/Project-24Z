@@ -2,7 +2,7 @@ import Foundation
 import GRDB
 
 /// scope専用GRDBへAcquisition目録をtransaction保存します。
-final class GRDBAcquisitionRepository: AcquisitionRepository, SessionVehicleBindingRepository, UnassignedSessionRepository {
+final class GRDBAcquisitionRepository: AcquisitionRepository, AcquisitionSessionStopPersisting, SessionVehicleBindingRepository, UnassignedSessionRepository, @unchecked Sendable {
     private let databasePool: DatabasePool
     private let scopeString: String
     private let catalogDigester = SHA256AcquisitionChunkCatalogDigester()
@@ -73,13 +73,13 @@ final class GRDBAcquisitionRepository: AcquisitionRepository, SessionVehicleBind
                    let first: Int64 = row["next_record_sequence"],
                    let chunkSequence: Int64 = row["next_chunk_sequence"],
                    let state: String = row["stream_state"],
-                   state == AcquisitionStream.State.active.rawValue,
+                   state == AcquisitionStream.State.active.rawValue || state == AcquisitionStream.State.stopRequested.rawValue,
                    first <= Int64.max - recordCount else {
                     throw AcquisitionPersistenceError.conflict
                 }
                 let last = first + recordCount - 1
                 try database.execute(
-                    sql: "UPDATE acquisition_streams SET next_record_sequence=?,next_chunk_sequence=next_chunk_sequence+1,record_revision=record_revision+1,updated_at_utc=? WHERE user_scope_id=? AND stream_id=? AND record_revision=? AND stream_state='active'",
+                    sql: "UPDATE acquisition_streams SET next_record_sequence=?,next_chunk_sequence=next_chunk_sequence+1,record_revision=record_revision+1,updated_at_utc=? WHERE user_scope_id=? AND stream_id=? AND record_revision=? AND stream_state IN ('active','stop_requested')",
                     arguments: [last + 1, timestamp(updatedAt), scopeString, uuid(streamID), expectedStreamRevision]
                 )
                 guard database.changesCount == 1 else { throw AcquisitionPersistenceError.conflict }
@@ -180,6 +180,134 @@ final class GRDBAcquisitionRepository: AcquisitionRepository, SessionVehicleBind
         catch { throw VehiclePersistenceError.unavailable }
     }
 
+    /// Sessionと全非終端Streamを同じtransactionで`stop_requested`へ進めます。
+    /// - Parameters:
+    ///   - sessionID: 収集中Session ID。
+    ///   - requestedAt: 停止要求確定日時。
+    ///   - deviceID: 更新端末ID。
+    /// - Returns: 最終停止transactionに使う確定済みSession Revision。
+    /// - Throws: 非収集中、stale状態、またはDB利用不能。
+    func requestStop(sessionID: UUID, requestedAt: Date, deviceID: UUID) throws -> AcquisitionStopContext {
+        do {
+            return try databasePool.write { database in
+                guard let row = try Row.fetchOne(
+                    database,
+                    sql: "SELECT capture_state,record_revision,updated_at_utc FROM active_or_local_acquisition_sessions WHERE user_scope_id=? AND session_id=?",
+                    arguments: [scopeString, uuid(sessionID)]
+                ), (row["capture_state"] as String) == "recording",
+                   let revision: Int = row["record_revision"],
+                   let previousUpdatedAt: String = row["updated_at_utc"] else {
+                    throw AcquisitionPersistenceError.conflict
+                }
+                let invalidStreamCount = try Int.fetchOne(
+                    database,
+                    sql: "SELECT COUNT(*) FROM active_or_local_acquisition_streams WHERE user_scope_id=? AND session_id=? AND stream_state NOT IN ('active','pause_requested','paused','reconnecting','stopped')",
+                    arguments: [scopeString, uuid(sessionID)]
+                ) ?? 0
+                let streamCount = try Int.fetchOne(
+                    database,
+                    sql: "SELECT COUNT(*) FROM active_or_local_acquisition_streams WHERE user_scope_id=? AND session_id=?",
+                    arguments: [scopeString, uuid(sessionID)]
+                ) ?? 0
+                guard streamCount > 0, invalidStreamCount == 0 else {
+                    throw AcquisitionPersistenceError.conflict
+                }
+                let latestStreamUpdate = try String.fetchOne(
+                    database,
+                    sql: "SELECT MAX(updated_at_utc) FROM active_or_local_acquisition_streams WHERE user_scope_id=? AND session_id=?",
+                    arguments: [scopeString, uuid(sessionID)]
+                ) ?? previousUpdatedAt
+                var value = timestamp(requestedAt)
+                let latestUpdate = max(previousUpdatedAt, latestStreamUpdate)
+                if value <= latestUpdate {
+                    value = timestamp((GRDBVehicleDateCodec.date(from: latestUpdate) ?? requestedAt).addingTimeInterval(0.000_001))
+                }
+                try database.execute(
+                    sql: "UPDATE acquisition_streams SET stream_state='stop_requested',record_revision=record_revision+1,updated_at_utc=? WHERE user_scope_id=? AND session_id=? AND stream_state IN ('active','pause_requested','paused','reconnecting')",
+                    arguments: [value, scopeString, uuid(sessionID)]
+                )
+                try database.execute(
+                    sql: "UPDATE acquisition_sessions SET capture_state='stop_requested',record_revision=record_revision+1,updated_at_utc=?,updated_by_device_id=? WHERE user_scope_id=? AND session_id=? AND capture_state='recording' AND record_revision=?",
+                    arguments: [value, uuid(deviceID), scopeString, uuid(sessionID), revision]
+                )
+                guard database.changesCount == 1 else { throw AcquisitionPersistenceError.conflict }
+                return AcquisitionStopContext(sessionID: sessionID, sessionRevision: revision + 1)
+            }
+        } catch let error as AcquisitionPersistenceError {
+            throw error
+        } catch let error as DatabaseError where error.resultCode == .SQLITE_CONSTRAINT {
+            throw AcquisitionPersistenceError.conflict
+        } catch {
+            throw AcquisitionPersistenceError.unavailable
+        }
+    }
+
+    /// queueとChunk確定後に正常終了をcommitします。
+    /// - Parameters:
+    ///   - context: 停止要求transactionの確定結果。
+    ///   - endedAt: 正常終了確定日時。
+    ///   - deviceID: 更新端末ID。
+    /// - Throws: stale状態またはDB利用不能。
+    func completeStop(_ context: AcquisitionStopContext, endedAt: Date, deviceID: UUID) throws {
+        try finishSession(
+            sessionID: context.sessionID,
+            expectedSessionRevision: context.sessionRevision,
+            reason: .userStop,
+            endedAt: endedAt,
+            deviceID: deviceID
+        )
+    }
+
+    /// 停止途中の障害を`interrupted`／`recovery_required`へ終端します。
+    /// - Parameters:
+    ///   - sessionID: 対象Session ID。
+    ///   - reason: 正常停止以外の安定理由。
+    ///   - endedAt: 異常終端観測日時。
+    ///   - deviceID: 更新端末ID。
+    /// - Throws: DB状態が確定不能な場合。
+    func requireRecovery(sessionID: UUID, reason: AcquisitionSession.EndReason, endedAt: Date, deviceID: UUID) throws {
+        guard reason != .userStop else { throw AcquisitionPersistenceError.invalidRequest }
+        do {
+            try databasePool.write { database in
+                guard let row = try Row.fetchOne(
+                    database,
+                    sql: "SELECT capture_state,updated_at_utc FROM active_or_local_acquisition_sessions WHERE user_scope_id=? AND session_id=?",
+                    arguments: [scopeString, uuid(sessionID)]
+                ), let captureState: String = row["capture_state"],
+                   let previousUpdatedAt: String = row["updated_at_utc"] else {
+                    throw AcquisitionPersistenceError.conflict
+                }
+                if captureState == "recovery_required" { return }
+                guard captureState == "recording" || captureState == "stop_requested" else {
+                    throw AcquisitionPersistenceError.conflict
+                }
+                let latestStreamUpdate = try String.fetchOne(
+                    database,
+                    sql: "SELECT MAX(updated_at_utc) FROM active_or_local_acquisition_streams WHERE user_scope_id=? AND session_id=?",
+                    arguments: [scopeString, uuid(sessionID)]
+                ) ?? previousUpdatedAt
+                var value = timestamp(endedAt)
+                let latestUpdate = max(previousUpdatedAt, latestStreamUpdate)
+                if value <= latestUpdate {
+                    value = timestamp((GRDBVehicleDateCodec.date(from: latestUpdate) ?? endedAt).addingTimeInterval(0.000_001))
+                }
+                try database.execute(
+                    sql: "UPDATE acquisition_streams SET stream_state='interrupted',ended_at_utc=?,record_revision=record_revision+1,updated_at_utc=? WHERE user_scope_id=? AND session_id=? AND stream_state NOT IN ('stopped','interrupted')",
+                    arguments: [value, value, scopeString, uuid(sessionID)]
+                )
+                try database.execute(
+                    sql: "UPDATE acquisition_sessions SET capture_state='recovery_required',integrity_state='attention_required',end_reason_code=?,ended_at_utc=?,record_revision=record_revision+1,updated_at_utc=?,updated_by_device_id=? WHERE user_scope_id=? AND session_id=? AND capture_state IN ('recording','stop_requested')",
+                    arguments: [reason.rawValue, value, value, uuid(deviceID), scopeString, uuid(sessionID)]
+                )
+                guard database.changesCount == 1 else { throw AcquisitionPersistenceError.conflict }
+            }
+        } catch let error as AcquisitionPersistenceError {
+            throw error
+        } catch {
+            throw AcquisitionPersistenceError.unavailable
+        }
+    }
+
     /// vehicle_idの有無に依存せず、全StreamとSessionを同じtransactionで終端します。
     /// - Parameters:
     ///   - sessionID: 終端するSession。
@@ -192,12 +320,61 @@ final class GRDBAcquisitionRepository: AcquisitionRepository, SessionVehicleBind
         guard expectedSessionRevision >= 1 else { throw AcquisitionPersistenceError.invalidRequest }
         do {
             try databasePool.write { database in
-                let value = timestamp(endedAt)
+                let expectedCaptureState = reason == .userStop ? "stop_requested" : nil
+                guard let row = try Row.fetchOne(
+                    database,
+                    sql: "SELECT capture_state,updated_at_utc FROM active_or_local_acquisition_sessions WHERE user_scope_id=? AND session_id=? AND record_revision=?",
+                    arguments: [scopeString, uuid(sessionID), expectedSessionRevision]
+                ), let captureState: String = row["capture_state"],
+                   let previousUpdatedAt: String = row["updated_at_utc"],
+                   expectedCaptureState == nil || captureState == expectedCaptureState else {
+                    throw AcquisitionPersistenceError.conflict
+                }
+                if reason == .userStop {
+                    let invalidStreamCount = try Int.fetchOne(
+                        database,
+                        sql: "SELECT COUNT(*) FROM active_or_local_acquisition_streams WHERE user_scope_id=? AND session_id=? AND stream_state NOT IN ('stop_requested','stopped')",
+                        arguments: [scopeString, uuid(sessionID)]
+                    ) ?? 0
+                    let streamCount = try Int.fetchOne(
+                        database,
+                        sql: "SELECT COUNT(*) FROM active_or_local_acquisition_streams WHERE user_scope_id=? AND session_id=?",
+                        arguments: [scopeString, uuid(sessionID)]
+                    ) ?? 0
+                    let openGapCount = try Int.fetchOne(
+                        database,
+                        sql: "SELECT COUNT(*) FROM active_or_local_acquisition_gaps WHERE user_scope_id=? AND session_id=? AND end_utc IS NULL",
+                        arguments: [scopeString, uuid(sessionID)]
+                    ) ?? 0
+                    guard streamCount > 0, invalidStreamCount == 0, openGapCount == 0 else {
+                        throw AcquisitionPersistenceError.conflict
+                    }
+                }
+                let latestStreamUpdate = try String.fetchOne(
+                    database,
+                    sql: "SELECT MAX(updated_at_utc) FROM active_or_local_acquisition_streams WHERE user_scope_id=? AND session_id=?",
+                    arguments: [scopeString, uuid(sessionID)]
+                ) ?? previousUpdatedAt
+                var value = timestamp(endedAt)
+                let latestUpdate = max(previousUpdatedAt, latestStreamUpdate)
+                if value <= latestUpdate {
+                    value = timestamp((GRDBVehicleDateCodec.date(from: latestUpdate) ?? endedAt).addingTimeInterval(0.000_001))
+                }
                 let streamState = reason == .userStop ? "stopped" : "interrupted"
-                try database.execute(sql: "UPDATE acquisition_streams SET stream_state=?,ended_at_utc=?,record_revision=record_revision+1,updated_at_utc=? WHERE user_scope_id=? AND session_id=? AND stream_state NOT IN ('stopped','interrupted')", arguments: [streamState,value,value,scopeString,uuid(sessionID)])
-                let captureState = reason == .userStop ? "ended_cleanly" : "recovery_required"
+                let streamSourcePredicate = reason == .userStop ? "stream_state='stop_requested'" : "stream_state NOT IN ('stopped','interrupted')"
+                try database.execute(sql: "UPDATE acquisition_streams SET stream_state=?,ended_at_utc=?,record_revision=record_revision+1,updated_at_utc=? WHERE user_scope_id=? AND session_id=? AND \(streamSourcePredicate)", arguments: [streamState,value,value,scopeString,uuid(sessionID)])
+                if reason == .userStop {
+                    let nonStoppedCount = try Int.fetchOne(
+                        database,
+                        sql: "SELECT COUNT(*) FROM active_or_local_acquisition_streams WHERE user_scope_id=? AND session_id=? AND stream_state<>'stopped'",
+                        arguments: [scopeString, uuid(sessionID)]
+                    ) ?? 0
+                    guard nonStoppedCount == 0 else { throw AcquisitionPersistenceError.conflict }
+                }
+                let finalCaptureState = reason == .userStop ? "ended_cleanly" : "recovery_required"
                 let integrityState = reason == .userStop ? "unchecked" : "attention_required"
-                try database.execute(sql: "UPDATE acquisition_sessions SET capture_state=?,integrity_state=?,end_reason_code=?,ended_at_utc=?,record_revision=record_revision+1,updated_at_utc=?,updated_by_device_id=? WHERE user_scope_id=? AND session_id=? AND capture_state IN ('recording','stop_requested') AND record_revision=?", arguments: [captureState,integrityState,reason.rawValue,value,value,uuid(deviceID),scopeString,uuid(sessionID),expectedSessionRevision])
+                let sourcePredicate = reason == .userStop ? "capture_state='stop_requested'" : "capture_state IN ('recording','stop_requested')"
+                try database.execute(sql: "UPDATE acquisition_sessions SET capture_state=?,integrity_state=?,end_reason_code=?,ended_at_utc=?,record_revision=record_revision+1,updated_at_utc=?,updated_by_device_id=? WHERE user_scope_id=? AND session_id=? AND \(sourcePredicate) AND record_revision=?", arguments: [finalCaptureState,integrityState,reason.rawValue,value,value,uuid(deviceID),scopeString,uuid(sessionID),expectedSessionRevision])
                 guard database.changesCount == 1 else { throw AcquisitionPersistenceError.conflict }
             }
         } catch let error as AcquisitionPersistenceError { throw error }

@@ -5,4 +5,7 @@ enum AppDestination: Hashable {
 
     /// 車両管理画面。
     case vehicleManagement
+
+    /// 設定画面。
+    case settings
 }

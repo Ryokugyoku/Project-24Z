@@ -1,0 +1,97 @@
+#if os(macOS)
+import SwiftUI
+
+/// macOS専用の端末ローカル接続設定画面です。
+struct MacOSConnectionSettingsView: View {
+    /// Applicationの候補探索・保存状態です。
+    @EnvironmentObject private var model: ConnectionSettingsModel
+
+    /// USBを唯一の準備対象とし、BluetoothとRaw CANを開発中として非活性表示します。
+    var body: some View {
+        Form {
+            if let message = model.state.productionAvailabilityMessage {
+                Section("現在の利用可否") { Label(message, systemImage: "exclamationmark.triangle") }
+            }
+            roleSection(model.state.primary, required: true)
+            roleSection(model.state.secondary, required: false)
+        }
+        .formStyle(.grouped)
+        .navigationTitle("接続設定")
+        .frame(minWidth: 520, minHeight: 420)
+        .task { await model.perform(.load) }
+        .onDisappear { Task { await model.perform(.cancelDiscovery) } }
+        .sheet(isPresented: selectionPresented) { MacOSConnectionCandidateSelectionView(model: model) }
+    }
+
+    /// 一役割の確定値とmacOS操作を表示します。
+    /// - Parameters:
+    ///   - roleState: Applicationが公開する役割状態。
+    ///   - required: Primaryの必須表示か。
+    /// - Returns: macOS専用Section。
+    private func roleSection(_ roleState: ConnectionSettingsRolePresentation, required: Bool) -> some View {
+        Section(required ? "OBD・PID用（必須）" : "Raw CAN受信専用（任意）") {
+            if roleState.role == .secondaryRawCAN {
+                Label("開発中", systemImage: "hammer")
+                    .foregroundStyle(.secondary)
+            }
+            if let candidate = roleState.candidate {
+                LabeledContent("既定候補", value: candidate.endpoint.displayName)
+                LabeledContent("接続方式", value: transportName(candidate.endpoint.transportKind))
+                Text("表示名はAdapter Identity確認済みの証拠ではありません。").foregroundStyle(.secondary)
+                HStack {
+                    Button("USBデバイスへ変更") { begin(roleState.role, kind: .usbSerial) }
+                        .disabled(roleState.role == .secondaryRawCAN)
+                    Button("Bluetoothデバイスへ変更（開発中）") { begin(roleState.role, kind: .bluetoothLE) }
+                        .disabled(true)
+                    Button("既定候補を解除", role: .destructive) {
+                        Task { await model.perform(.clearDefault(role: roleState.role)) }
+                    }
+                }
+            } else {
+                Text("未設定")
+                HStack {
+                    Button("USBデバイスを選択") { begin(roleState.role, kind: .usbSerial) }
+                        .disabled(roleState.role == .secondaryRawCAN)
+                    Button("Bluetoothデバイスを選択（開発中）") { begin(roleState.role, kind: .bluetoothLE) }
+                        .disabled(true)
+                }
+            }
+            Text("Bluetooth接続は開発中のため、現在は選択できません。")
+                .foregroundStyle(.secondary)
+            if roleState.role == .secondaryRawCAN {
+                Text("CAN接続は開発中です。Primaryとは別の物理Adapterと受信専用の実車証拠が揃うまで利用できません。")
+                    .foregroundStyle(.secondary)
+            }
+            if roleState.isBusy { ProgressView() }
+            if let failure = roleState.failureMessage { Text(failure).foregroundStyle(.red) }
+        }
+    }
+
+    /// 明示されたTransport探索Actionを通知します。
+    /// - Parameters:
+    ///   - role: 選択対象役割。
+    ///   - kind: USBまたはBluetoothの内部Transport種別。
+    private func begin(_ role: CommunicationRole, kind: TransportEndpoint.Kind) {
+        Task { await model.perform(.beginDiscovery(role: role, transportKind: kind)) }
+    }
+
+    /// 選択Stateをsheet表示Bindingへ変換します。
+    private var selectionPresented: Binding<Bool> {
+        Binding(get: { model.state.selectingRole != nil }, set: { shown in
+            if !shown { Task { await model.perform(.cancelDiscovery) } }
+        })
+    }
+
+    /// Transport種別の非機密表示名を返します。
+    /// - Parameter kind: 内部Transport種別。
+    /// - Returns: 利用者向け表示名。
+    private func transportName(_ kind: TransportEndpoint.Kind) -> String {
+        switch kind {
+        case .usbSerial: "USB"
+        case .bluetoothLE: "Bluetooth LE"
+        case .bluetoothClassic: "Bluetooth Classic / MFi"
+        case .tcp: "ネットワーク"
+        }
+    }
+}
+#endif
