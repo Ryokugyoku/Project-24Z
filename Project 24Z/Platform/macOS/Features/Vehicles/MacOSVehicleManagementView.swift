@@ -298,19 +298,21 @@ struct MacOSVehicleManagementView: View {
                             option.displayName,
                             systemImage: option.isSelected ? "checkmark.circle.fill" : "circle"
                         )
-                        Button("Adapterを選択") {
-                            model.perform(
-                                .selectAdapter(
-                                    identifier: option.adapterSelection,
-                                    revision: disconnected.display.revision
+                        if !option.isSelected {
+                            Button("Adapterを選択") {
+                                model.perform(
+                                    .selectAdapter(
+                                        identifier: option.adapterSelection,
+                                        revision: disconnected.display.revision
+                                    )
                                 )
-                            )
+                            }
+                            .accessibilityIdentifier("project24z.vehicleRegistration.selectAdapter")
                         }
-                        .accessibilityIdentifier("project24z.vehicleRegistration.selectAdapter")
                     }
                     GridRow {
                         Text("")
-                        Button("この接続方法で開始") {
+                        Button("車両識別を開始") {
                             model.perform(
                                 .startConnection(
                                     transportSelection: option.transportSelection,

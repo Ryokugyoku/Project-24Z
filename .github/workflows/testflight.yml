@@ -116,6 +116,14 @@ jobs:
             -authenticationKeyIssuerID "$API_ISSUER_ID" \
             CURRENT_PROJECT_VERSION="${GITHUB_RUN_NUMBER}"
 
+      - name: Verify macOS USB serial entitlements
+        run: |
+          app_path="${RUNNER_TEMP}/Project24Z-macOS.xcarchive/Products/Applications/Project 24Z.app"
+          codesign -d --entitlements :- "$app_path" > "${RUNNER_TEMP}/macOS-entitlements.plist"
+          /usr/libexec/PlistBuddy -c 'Print :com.apple.security.app-sandbox' "${RUNNER_TEMP}/macOS-entitlements.plist"
+          /usr/libexec/PlistBuddy -c 'Print :com.apple.security.device.serial' "${RUNNER_TEMP}/macOS-entitlements.plist"
+          /usr/libexec/PlistBuddy -c 'Print :com.apple.security.device.usb' "${RUNNER_TEMP}/macOS-entitlements.plist"
+
       - name: Upload macOS app to TestFlight
         env:
           API_KEY_ID: ${{ secrets.APP_STORE_CONNECT_API_KEY_ID }}

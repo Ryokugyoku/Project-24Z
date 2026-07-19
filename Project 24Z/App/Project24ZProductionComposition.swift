@@ -16,6 +16,9 @@ final class Project24ZProductionComposition {
     /// ログ収集開始導線を管理するApplication Modelです。
     let dashboardModel: DashboardModel
 
+    /// HOMEへ最後の実車PID Snapshotを公開するApplication Modelです。
+    let telemetryModel: VehicleTelemetryModel
+
 #if PROJECT24Z_DEVELOPMENT_DATABASE_BROWSER
     /// 専用flag構成だけで生成するread-only Development Database Browserです。
     let developmentDatabaseBrowserModel: DevelopmentDatabaseBrowserModel
@@ -31,6 +34,7 @@ final class Project24ZProductionComposition {
     /// - Throws: SwiftDataコンテナを生成できない場合のエラー。
     init() throws {
         modelContainer = try SwiftDataContainerFactory.makeContainer()
+        telemetryModel = VehicleTelemetryModel()
 #if PROJECT24Z_DEVELOPMENT_DATABASE_BROWSER
         developmentDatabaseBrowserModel = DevelopmentDatabaseBrowserModel(readers: [
             UnavailableGRDBDevelopmentDatabaseReader(),
@@ -39,9 +43,51 @@ final class Project24ZProductionComposition {
 #endif
 
         let runtime = UnavailablePIDVehicleRuntime()
+#if os(macOS)
+        let platform = LocalDeviceScope.Platform.macOS
+#else
+        let platform = LocalDeviceScope.Platform.iOS
+#endif
+        let localScope = LocalInstallationScopeProvider().scope(platform: platform)
+        let applicationSupport = try FileManager.default.url(
+            for: .applicationSupportDirectory,
+            in: .userDomainMask,
+            appropriateFor: nil,
+            create: true
+        )
+        let databaseDirectory = applicationSupport.appendingPathComponent("Project24Z", isDirectory: true)
+        try FileManager.default.createDirectory(at: databaseDirectory, withIntermediateDirectories: true)
+        let storeResult = GRDBVehicleIdentityStore.open(
+            at: databaseDirectory.appendingPathComponent("vehicle-identity.sqlite"),
+            userScopeID: localScope.userScopeID,
+            activeDigestKeyVersion: 1
+        )
+        let vehicleRepository: any VehicleIdentityRepository
+        let bindingRepository: any SessionVehicleBindingRepository
+        let acquisitionRepository: (any AcquisitionRepository)?
+        let sessionRepository: (any UnassignedSessionRepository)?
+        let acquisitionStopRepository: (any AcquisitionSessionStopPersisting)?
+        let storeUnavailableReason: String?
+        switch storeResult {
+        case .available(let store):
+            vehicleRepository = store.repository
+            bindingRepository = store.acquisitionRepository
+            acquisitionRepository = store.acquisitionRepository
+            sessionRepository = store.acquisitionRepository
+            acquisitionStopRepository = store.acquisitionRepository
+            storeUnavailableReason = nil
+        case .unavailable(let unavailable):
+            vehicleRepository = UnavailableVehicleIdentityRepository()
+            bindingRepository = UnavailableSessionVehicleBindingRepository()
+            acquisitionRepository = nil
+            sessionRepository = nil
+            acquisitionStopRepository = nil
+            storeUnavailableReason = "GRDB Storeを安全に開けませんでした（\(unavailable.reason)）。"
+        }
         let workflow = VehicleRegistrationWorkflow(
-            vehicleRepository: UnavailableVehicleIdentityRepository(),
-            bindingRepository: UnavailableSessionVehicleBindingRepository()
+            vehicleRepository: vehicleRepository,
+            bindingRepository: bindingRepository,
+            sessionRepository: sessionRepository
         )
 #if os(iOS)
         let transport: any CommunicationTransport = IOSUnavailableWirelessTransport()
@@ -56,36 +102,57 @@ final class Project24ZProductionComposition {
             transport: transport,
             sink: UnavailableAcquisitionEventSink()
         )
+#if DEBUG && os(macOS)
+        let adapterIdentityProbe: (any AdapterIdentityProbing)? = ELMAdapterIdentityProbe(
+            endpointLocator: MacOSOBDLinkEXEndpointLocator(),
+            transport: MacOSUSBSerialTransport(),
+            encoder: OBDLinkEXIdentityCommandAllowlist.version1
+        )
+#else
+        let adapterIdentityProbe: (any AdapterIdentityProbing)? = nil
+#endif
+#if os(macOS)
+        let vehicleDiscoverer: (any OBDVehicleDiscovering)? = storeUnavailableReason == nil
+            ? OBDLinkEXVehicleDiscovery(
+                endpointLocator: MacOSOBDLinkEXEndpointLocator(),
+                transport: MacOSUSBSerialTransport()
+            )
+            : nil
+        let sensitiveValueProtector: (any VehicleSensitiveValueProtecting)? = storeUnavailableReason == nil
+            ? KeychainVehicleSensitiveValueProtector()
+            : nil
+#else
+        let vehicleDiscoverer: (any OBDVehicleDiscovering)? = nil
+        let sensitiveValueProtector: (any VehicleSensitiveValueProtecting)? = nil
+#endif
         vehicleRegistrationServices = VehicleRegistrationProductionServices(
             workflow: workflow,
             connectionRuntime: connectionRuntime,
             supportDiscoveryCoordinator: PIDSupportDiscoveryCoordinator(runtime: runtime),
             adaptivePollingCoordinator: AdaptivePollingCoordinator(runtime: runtime),
-            blockedReason: "認証済みuser scopeとPID-HG-02／03／04／05／06／07／10／11が未達です。"
+            adapterIdentityProbe: adapterIdentityProbe,
+            vehicleDiscoverer: vehicleDiscoverer,
+            sensitiveValueProtector: sensitiveValueProtector,
+            acquisitionRepository: acquisitionRepository,
+            acquisitionStopRepository: acquisitionStopRepository,
+            localScope: acquisitionRepository == nil ? nil : localScope,
+            telemetryModel: telemetryModel,
+            blockedReason: storeUnavailableReason
+                ?? "このPlatformにはOBDLink EX USB serial Transportがありません。macOS TestFlightで確認してください。"
         )
         vehicleRegistrationModel = VehicleRegistrationModel(
             productionServices: vehicleRegistrationServices
         )
 
-#if os(macOS)
-        let unavailablePlatform = LocalDeviceScope.Platform.macOS
-#else
-        let unavailablePlatform = LocalDeviceScope.Platform.iOS
-#endif
-        let unavailableScope = LocalDeviceScope(
-            userScopeID: UUID(uuidString: "00000000-0000-0000-0000-000000000000")!,
-            localDeviceScopeID: UUID(uuidString: "00000000-0000-0000-0000-000000000000")!,
-            platform: unavailablePlatform
-        )
         let adapterRepository = UnavailableDefaultAdapterRepository()
         connectionSettingsModel = ConnectionSettingsModel(
-            scope: unavailableScope,
+            scope: localScope,
             repository: adapterRepository,
             discovery: UnavailableConnectionEndpointDiscovery(),
             availabilityMessage: "対応Adapter、firmware、Transport、認証済み保存ScopeのHard Gateが未達のため、Production接続は利用できません。"
         )
         let startCoordinator = AcquisitionStartCoordinator(
-            scope: unavailableScope,
+            scope: localScope,
             repository: adapterRepository,
             preflight: UnavailableAcquisitionStartPreflight(),
             primaryPreparer: UnavailableAdapterConnectionPreparer(),
@@ -95,7 +162,7 @@ final class Project24ZProductionComposition {
         )
         dashboardModel = DashboardModel(
             repository: adapterRepository,
-            scope: unavailableScope,
+            scope: localScope,
             coordinator: startCoordinator,
             stopCoordinator: nil
         )

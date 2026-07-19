@@ -106,6 +106,33 @@ final class VehicleRegistrationWorkflow {
         }
     }
 
+    /// 登録確認画面で入力された表示名暗号文を、write dispatch前のContextへ反映します。
+    /// - Parameter encryptedDisplayName: 未入力ならnil、入力済みなら認証付き暗号文。
+    /// - Throws: 登録確認可能Stateでない場合。
+    func updatePendingDisplayName(_ encryptedDisplayName: EncryptedVehicleValue?) throws {
+        switch state {
+        case .registrationReady(let context, _):
+            state = .registrationReady(
+                replacingDisplayName(in: context, with: encryptedDisplayName),
+                revision: nextRevision()
+            )
+        case .activeDuplicate(let context, let vehicle, _):
+            state = .activeDuplicate(
+                replacingDisplayName(in: context, with: encryptedDisplayName),
+                vehicle,
+                revision: nextRevision()
+            )
+        case .archivedDuplicate(let context, let vehicle, _):
+            state = .archivedDuplicate(
+                replacingDisplayName(in: context, with: encryptedDisplayName),
+                vehicle,
+                revision: nextRevision()
+            )
+        default:
+            throw Error.invalidState
+        }
+    }
+
     /// 新規または確認済み既存候補の登録transactionを一度だけdispatchします。
     /// - Parameters:
     ///   - operationID: process内二重ActionをcoalesceするUUID。
@@ -341,6 +368,34 @@ final class VehicleRegistrationWorkflow {
                 recordedAt: request.recordedAt,
                 expectedCandidateVehicleID: vehicle.vehicleID,
                 expectedCandidateLifecycleRevision: vehicle.lifecycleRevision
+            ),
+            connectionGeneration: context.connectionGeneration,
+            scanAttemptID: context.scanAttemptID,
+            sessionID: context.sessionID,
+            sessionRevision: context.sessionRevision
+        )
+    }
+
+    /// 登録待ちContextの任意表示名だけを置換します。
+    /// - Parameters:
+    ///   - context: 元の不変Context。
+    ///   - encryptedDisplayName: 利用者入力を保護した値。
+    /// - Returns: 識別・Session tokenを維持した新Context。
+    private func replacingDisplayName(
+        in context: VehicleRegistrationWorkflowContext,
+        with encryptedDisplayName: EncryptedVehicleValue?
+    ) -> VehicleRegistrationWorkflowContext {
+        let request = context.request
+        return VehicleRegistrationWorkflowContext(
+            request: VehicleRegistrationRequest(
+                proposedVehicleID: request.proposedVehicleID,
+                encryptedDisplayName: encryptedDisplayName,
+                identifiers: request.identifiers,
+                scan: request.scan,
+                deviceID: request.deviceID,
+                recordedAt: request.recordedAt,
+                expectedCandidateVehicleID: request.expectedCandidateVehicleID,
+                expectedCandidateLifecycleRevision: request.expectedCandidateLifecycleRevision
             ),
             connectionGeneration: context.connectionGeneration,
             scanAttemptID: context.scanAttemptID,

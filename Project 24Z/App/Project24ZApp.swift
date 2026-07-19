@@ -35,11 +35,13 @@ struct Project24ZApp: App {
             MacOSRootView(vehicleRegistrationModel: vehicleRegistrationModel)
                 .environmentObject(productionComposition.connectionSettingsModel)
                 .environmentObject(productionComposition.dashboardModel)
+                .environmentObject(productionComposition.telemetryModel)
                 .environmentObject(productionComposition.developmentDatabaseBrowserModel)
 #else
             MacOSRootView(vehicleRegistrationModel: vehicleRegistrationModel)
                 .environmentObject(productionComposition.connectionSettingsModel)
                 .environmentObject(productionComposition.dashboardModel)
+                .environmentObject(productionComposition.telemetryModel)
 #endif
         }
         .defaultSize(width: 900, height: 640)
@@ -50,11 +52,13 @@ struct Project24ZApp: App {
             IOSRootView(vehicleRegistrationModel: vehicleRegistrationModel)
                 .environmentObject(productionComposition.connectionSettingsModel)
                 .environmentObject(productionComposition.dashboardModel)
+                .environmentObject(productionComposition.telemetryModel)
                 .environmentObject(productionComposition.developmentDatabaseBrowserModel)
 #else
             IOSRootView(vehicleRegistrationModel: vehicleRegistrationModel)
                 .environmentObject(productionComposition.connectionSettingsModel)
                 .environmentObject(productionComposition.dashboardModel)
+                .environmentObject(productionComposition.telemetryModel)
 #endif
         }
         .modelContainer(productionComposition.modelContainer)

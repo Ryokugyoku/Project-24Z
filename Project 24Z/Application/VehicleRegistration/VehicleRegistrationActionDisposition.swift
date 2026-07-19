@@ -1,5 +1,8 @@
 /// 未実装または無効な車両登録Actionの拒否結果です。
 enum VehicleRegistrationActionDisposition: Equatable, Sendable {
+    /// Productionへ影響しない承認済みDevelopment操作を受理しました。
+    case accepted
+
     /// 表示更新後の古いActionであるため拒否しました。
     case rejectedStalePresentation
 

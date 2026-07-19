@@ -41,6 +41,7 @@ struct VehicleRegistrationModelTests {
             ),
             supportDiscoveryCoordinator: PIDSupportDiscoveryCoordinator(runtime: runtime),
             adaptivePollingCoordinator: AdaptivePollingCoordinator(runtime: runtime),
+            telemetryModel: VehicleTelemetryModel(),
             blockedReason: "PID-HG-02／03／06が未達です。"
         )
         let model = VehicleRegistrationModel(productionServices: services)
@@ -51,6 +52,62 @@ struct VehicleRegistrationModelTests {
         }
         #expect(display.unavailableReason?.contains("PID-HG-02") == true)
         #expect(model.state.isRegistered == false)
+    }
+
+    /// Development Probe成功を車両登録成功へ昇格せず、Adapter確認済みblockedで止めることを検証します。
+    @Test
+    func approvedAdapterProbeStopsBeforeVehicleIdentification() async {
+        let runtime = UnavailablePIDVehicleRuntime()
+        let probe = FakeAdapterIdentityProbe()
+#if os(iOS)
+        let transport: any CommunicationTransport = IOSUnavailableWirelessTransport()
+#else
+        let transport: any CommunicationTransport = MacOSUnavailableTransport()
+#endif
+        let services = VehicleRegistrationProductionServices(
+            workflow: VehicleRegistrationWorkflow(
+                vehicleRepository: UnavailableVehicleIdentityRepository(),
+                bindingRepository: UnavailableSessionVehicleBindingRepository()
+            ),
+            connectionRuntime: ConnectionRuntime(
+                role: .primaryOBD,
+                adapterReference: AdapterReference(opaqueID: "test-approved-adapter-probe"),
+                transport: transport,
+                sink: UnavailableAcquisitionEventSink()
+            ),
+            supportDiscoveryCoordinator: PIDSupportDiscoveryCoordinator(runtime: runtime),
+            adaptivePollingCoordinator: AdaptivePollingCoordinator(runtime: runtime),
+            adapterIdentityProbe: probe,
+            telemetryModel: VehicleTelemetryModel(),
+            blockedReason: "車両bus Hard Gateは未達です。"
+        )
+        let model = VehicleRegistrationModel(productionServices: services)
+        guard case .disconnected(let disconnected) = model.state,
+              let option = disconnected.transportOptions.first else {
+            Issue.record("Development Probeは承認済みUSB選択肢を公開する必要があります。")
+            return
+        }
+
+        let disposition = model.perform(
+            .startConnection(
+                transportSelection: option.transportSelection,
+                revision: disconnected.display.revision
+            )
+        )
+        #expect(disposition == .accepted)
+
+        for _ in 0..<100 where model.state.display.title != "USB Adapter確認済み" {
+            await Task.yield()
+        }
+
+        guard case .blocked(let display) = model.state else {
+            Issue.record("Adapter単体確認後は車両識別未実施のblockedで停止する必要があります。")
+            return
+        }
+        #expect(display.title == "USB Adapter確認済み")
+        #expect(display.unavailableReason?.contains("車両OBD Request") == true)
+        #expect(model.state.isRegistered == false)
+        #expect(await probe.recordedCallCount() == 1)
     }
 
     /// Production blocked状態の未実装Actionが成功状態へ遷移しないことを検証します。

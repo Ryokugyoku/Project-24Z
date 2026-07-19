@@ -6,6 +6,9 @@ struct IOSHomeView: View {
     /// Composition Rootから注入されたダッシュボードModelです。
     @EnvironmentObject private var model: DashboardModel
 
+    /// 最後の実OBD probeで値取得に成功したPID Snapshotです。
+    @EnvironmentObject private var telemetryModel: VehicleTelemetryModel
+
     /// Primary未設定時に設定画面へ移動するPlatform Navigation Actionです。
     let openConnectionSettings: () -> Void
 
@@ -28,6 +31,28 @@ struct IOSHomeView: View {
                     Button("キャンセル", role: .cancel) {
                         Task { await model.cancelStart() }
                     }
+                }
+            }
+            Section("取得成功PID") {
+                Text(telemetryModel.statusMessage)
+                    .foregroundStyle(.secondary)
+                if telemetryModel.successfulPIDValues.isEmpty {
+                    ContentUnavailableView("PID値なし", systemImage: "waveform.path.ecg")
+                } else {
+                    ForEach(telemetryModel.successfulPIDValues) { reading in
+                        LabeledContent {
+                            Text("\(reading.formattedValue) \(reading.unit)")
+                                .monospacedDigit()
+                        } label: {
+                            VStack(alignment: .leading) {
+                                Text(reading.displayName)
+                                Text(String(format: "01 %02X", reading.parameter))
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                    }
+                    .accessibilityIdentifier("project24z.home.successfulPIDs")
                 }
             }
         }

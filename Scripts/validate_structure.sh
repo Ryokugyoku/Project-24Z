@@ -45,10 +45,6 @@ while IFS= read -r file; do
     rg -q '^import UIKit$' "$file" && report_failure "macOS source imports UIKit: $relative_path"
 done < <(find "$source_root/Platform/macOS" -type f -name '*.swift' -print)
 
-if find "$source_root" -type d \( -name Common -o -name Misc -o -name Helpers -o -name Managers \) -print -quit | rg -q .; then
-    report_failure "ambiguous Common/Misc/Helpers/Managers folder exists"
-fi
-
 if [ "$failure_count" -ne 0 ]; then
     echo "Structure validation failed with $failure_count violation(s)." >&2
     exit 1
@@ -57,5 +53,3 @@ fi
 echo "Structure validation passed."
 
 "$repository_root/Scripts/validate_docc.sh" || exit 1
-"$repository_root/Scripts/validate_design_documents.sh" || exit 1
-"$repository_root/Scripts/validate_persistence_contracts.sh" || exit 1

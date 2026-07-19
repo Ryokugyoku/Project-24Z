@@ -7,10 +7,11 @@ final class Project_24ZUITests: XCTestCase {
         continueAfterFailure = false
     }
 
-    /// 仮のAppleログイン後に車両管理のProduction blocked画面へ到達できることを検証します。
+    /// 仮ログイン後、iOS blockedまたはmacOS Development USB確認画面へ到達できることを検証します。
     @MainActor
     func testLoginAndSidebarNavigation() throws {
         let app = XCUIApplication()
+        app.launchArguments += ["-ApplePersistenceIgnoreState", "YES"]
         app.launch()
 
         let loginButton = app.buttons["project24z.login.apple"]
@@ -37,14 +38,20 @@ final class Project_24ZUITests: XCTestCase {
         scrollToElement(unavailableReason, in: app)
         XCTAssertTrue(unavailableReason.exists)
 
+#if os(macOS)
+        let approvedProbeAction = app.buttons["project24z.vehicleRegistration.startConnection"]
+        XCTAssertTrue(approvedProbeAction.exists)
+        XCTAssertTrue(approvedProbeAction.isEnabled)
+#else
         let primaryAction = app.buttons["project24z.vehicleRegistration.primaryAction"]
         scrollToElement(primaryAction, in: app)
         XCTAssertTrue(primaryAction.exists)
         XCTAssertFalse(primaryAction.isEnabled)
+#endif
 
         let screenshot = XCUIScreen.main.screenshot()
         let attachment = XCTAttachment(screenshot: screenshot)
-        attachment.name = "vehicle-registration-blocked"
+        attachment.name = "vehicle-registration-entry"
         attachment.lifetime = .keepAlways
         add(attachment)
     }
@@ -67,6 +74,7 @@ final class Project_24ZUITests: XCTestCase {
 
         for (fixtureName, expectedIdentifier) in scenarios {
             let app = XCUIApplication()
+            app.launchArguments += ["-ApplePersistenceIgnoreState", "YES"]
             app.launchEnvironment["PROJECT24Z_VEHICLE_REGISTRATION_FIXTURE"] = fixtureName
             app.launch()
 
